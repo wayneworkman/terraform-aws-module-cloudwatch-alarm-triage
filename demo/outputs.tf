@@ -55,6 +55,11 @@ output "usage_instructions" {
     # Monitor alarm state changes:
     aws cloudwatch describe-alarms --alarm-names "${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name}" --region us-east-2 --query "MetricAlarms[0].StateValue"
     
+    # Manually trigger the alarm for testing (forces state transition):
+    aws cloudwatch set-alarm-state --alarm-name "${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name}" --state-value OK --state-reason "Reset for testing" --region us-east-2
+    sleep 2
+    aws cloudwatch set-alarm-state --alarm-name "${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name}" --state-value ALARM --state-reason "Manual trigger for testing" --region us-east-2
+    
     # Stop demo failures (alarm will clear in ~1 minute):
     aws events disable-rule --name "${aws_cloudwatch_event_rule.every_minute.name}" --region us-east-2
     

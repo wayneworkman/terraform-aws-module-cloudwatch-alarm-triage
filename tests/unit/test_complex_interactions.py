@@ -27,57 +27,47 @@ class TestComplexInteractions:
         bedrock_responses = [
             # First tool request
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-1',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws logs describe-log-groups'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\nlogs = boto3.client(\"logs\"); result = logs.describe_log_groups()\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Second tool request after first fails
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-2',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'python', 'command': 'import boto3; client = boto3.client("ec2"); result = "fallback"'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\nclient = boto3.client(\"ec2\"); result = \"fallback\"\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Third tool request 
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-3',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws sts get-caller-identity'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\nsts = boto3.client(\"sts\"); result = sts.get_caller_identity()\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Final response
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': 'Investigation complete. Used multiple tools with some failures handled gracefully.'
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'Investigation complete. Used multiple tools with some failures handled gracefully.'
+                            }]
                         }
-                    ]
-                }).encode())
-            }
+                    }
+                }
         ]
         
-        mock_bedrock_client.invoke_model.side_effect = bedrock_responses
+        mock_bedrock_client.converse.side_effect = bedrock_responses
         
         # Mock Lambda responses: fail, fail, succeed
         lambda_responses = [
@@ -109,7 +99,7 @@ class TestComplexInteractions:
         
         mock_lambda_client.invoke.side_effect = lambda_responses
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Complex investigation prompt")
         
         # Should handle partial failures and complete investigation
@@ -118,7 +108,7 @@ class TestComplexInteractions:
         
         # Verify all tool calls were attempted
         assert mock_lambda_client.invoke.call_count == 3
-        assert mock_bedrock_client.invoke_model.call_count == 4
+        assert mock_bedrock_client.converse.call_count == 4
     
     @patch('bedrock_client.boto3.client')
     def test_claude_iterative_investigation_strategy(self, mock_boto3_client):
@@ -135,57 +125,47 @@ class TestComplexInteractions:
         bedrock_responses = [
             # First: Check basic alarm info
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-1',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws cloudwatch describe-alarms --alarm-names test-alarm'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\ncw = boto3.client(\"cloudwatch\"); result = cw.describe_alarms(AlarmNames=[\"test-alarm\"])\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Second: Based on alarm info, check logs
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-2', 
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws logs filter-log-events --log-group-name /aws/lambda/test-function --start-time 1234567890000'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\nlogs = boto3.client(\"logs\"); result = logs.filter_log_events(logGroupName=\"/aws/lambda/test-function\", startTime=1234567890000)\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Third: Based on logs, check IAM
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-3',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'python', 'command': 'import boto3; iam = boto3.client("iam"); result = "IAM check complete"'}
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'TOOL: python_executor\n```python\niam = boto3.client(\"iam\"); result = \"IAM check complete\"\n```'
+                            }]
                         }
-                    ]
-                }).encode())
+                    }
             },
             # Final analysis
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': 'Root cause identified through iterative investigation: IAM permission issue in Lambda execution.'
+                'output': {
+                        'message': {
+                            'content': [{
+                                'text': 'Root cause identified through iterative investigation: IAM permission issue in Lambda execution.'
+                            }]
                         }
-                    ]
-                }).encode())
-            }
+                    }
+                }
         ]
         
-        mock_bedrock_client.invoke_model.side_effect = bedrock_responses
+        mock_bedrock_client.converse.side_effect = bedrock_responses
         
         # Mock successful Lambda responses
         mock_lambda_client.invoke.return_value = {
@@ -196,7 +176,7 @@ class TestComplexInteractions:
             }).encode())
         }
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Iterative investigation")
         
         # Should complete iterative investigation 
@@ -210,9 +190,9 @@ class TestComplexInteractions:
         call_commands = [call[1]['Payload'] for call in mock_lambda_client.invoke.call_args_list]
         
         # First call should be about alarms
-        assert 'describe-alarms' in str(call_commands[0])
+        assert 'describe_alarms' in str(call_commands[0])
         # Second call should be about logs  
-        assert 'filter-log-events' in str(call_commands[1])
+        assert 'filter_log_events' in str(call_commands[1])
         # Third call should be about IAM
         assert 'iam' in str(call_commands[2]).lower()
     
@@ -232,32 +212,28 @@ class TestComplexInteractions:
         responses = []
         for i in range(7):
             response = {
-                'body': Mock(read=lambda i=i: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': f'tool-{i}',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': f'aws ec2 describe-instances --instance-ids i-{i:08d}'}
-                        }
-                    ]
-                }).encode())
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': f'TOOL: python_executor\n```python\nec2 = boto3.client("ec2"); result = ec2.describe_instances(InstanceIds=["i-{i:08d}"])\n```'
+                        }]
+                    }
+                }
             }
             responses.append(response)
         
         # Add final response with analysis
         responses.append({
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Analysis complete: Found 7 instances with varying states.'
+            'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Analysis complete: Found 7 instances with varying states.'
+                        }]
                     }
-                ]
-            }).encode())
-        })
+                }
+            })
         
-        mock_bedrock_client.invoke_model.side_effect = responses
+        mock_bedrock_client.converse.side_effect = responses
         
         # Mock Lambda always returns new "interesting" information
         mock_lambda_client.invoke.return_value = {
@@ -268,12 +244,12 @@ class TestComplexInteractions:
             }).encode())
         }
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Deep investigation")
         
         # Should complete with analysis
         assert 'Analysis complete: Found 7 instances' in result
         
         # Should have made appropriate number of calls
-        assert mock_bedrock_client.invoke_model.call_count == 8  # 7 tools + 1 final
+        assert mock_bedrock_client.converse.call_count == 8  # 7 tools + 1 final
         assert mock_lambda_client.invoke.call_count == 7  # 7 tool calls

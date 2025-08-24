@@ -24,21 +24,25 @@ class TestMonitoringAndObservability:
         }.get(service_name, Mock())
         
         # Mock successful Bedrock response
-        mock_bedrock_client.invoke_model.return_value = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [{'type': 'text', 'text': 'Analysis complete'}]
-            }).encode())
-        }
+        mock_bedrock_client.converse.return_value = {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Analysis complete'
+                        }]
+                    }
+                }
+            }
         
         # Mock CloudWatch metrics client
         with patch.dict(os.environ, {'AWS_REGION': 'us-east-1'}):
-            client = BedrockAgentClient('anthropic.claude-opus-4-1-20250805-v1:0', 'test-arn', 1000)
+            client = BedrockAgentClient('anthropic.claude-opus-4-1-20250805-v1:0', 'test-arn')
             
             # Simulate cost tracking by monitoring bedrock calls
             result = client.investigate_with_tools("Test investigation")
             
             # Verify Bedrock was called (which would be tracked for cost)
-            mock_bedrock_client.invoke_model.assert_called()
+            mock_bedrock_client.converse.assert_called()
             
             # Verify CloudWatch metrics would be published
             assert 'Analysis complete' in result
@@ -74,8 +78,6 @@ class TestMonitoringAndObservability:
         'BEDROCK_MODEL_ID': 'test-model',
         'TOOL_LAMBDA_ARN': 'test-arn',
         'SNS_TOPIC_ARN': 'test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '1000',
         'DYNAMODB_TABLE': 'test-table',
         'INVESTIGATION_WINDOW_HOURS': '1'
     })
@@ -212,7 +214,6 @@ class TestMonitoringAndObservability:
                 'performance_trend': 'stable'
             }
         }
-        
         # Test dashboard metrics calculation
         success_rate_24h = (operational_data['last_24h']['successful_investigations'] / 
                            operational_data['last_24h']['total_investigations']) * 100
@@ -249,11 +250,15 @@ class TestMonitoringAndObservability:
         }.get(service_name, Mock())
         
         # Mock health check responses
-        mock_bedrock_client.invoke_model.return_value = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [{'type': 'text', 'text': 'Health check OK'}]
-            }).encode())
-        }
+        mock_bedrock_client.converse.return_value = {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Health check OK'
+                        }]
+                    }
+                }
+            }
         
         mock_lambda_client.invoke.return_value = {
             'StatusCode': 200,
@@ -264,7 +269,7 @@ class TestMonitoringAndObservability:
         }
         
         # Simulate health check
-        client = BedrockAgentClient('test-model', 'test-arn', 100)
+        client = BedrockAgentClient('test-model', 'test-arn')
         
         try:
             # Simple health check investigation
@@ -274,7 +279,7 @@ class TestMonitoringAndObservability:
             assert health_status == 'healthy'
             
             # Verify components are responding
-            assert mock_bedrock_client.invoke_model.called
+            assert mock_bedrock_client.converse.called
             
         except Exception as e:
             # Health check failed

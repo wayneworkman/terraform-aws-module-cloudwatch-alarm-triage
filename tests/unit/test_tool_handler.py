@@ -7,96 +7,88 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tool-lambda')))
 
-from tool_handler import handler, execute_cli_command, execute_python_code
+from tool_handler import lambda_handler, handler, execute_python_code
 
 class TestToolHandler:
     
-    def test_handler_cli_success(self, mock_lambda_context):
-        """Test successful CLI command execution."""
-        event = {
-            'type': 'cli',
-            'command': 'aws --version'
-        }
-        
-        with patch('tool_handler.execute_cli_command') as mock_cli:
-            mock_cli.return_value = 'aws-cli/2.13.0 Python/3.11.4'
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 200
-            body = json.loads(result['body'])
-            assert body['success'] is True
-            assert 'aws-cli' in body['output']
-    
-    def test_handler_python_success(self, mock_lambda_context):
+    def test_handler_python_code_execution(self, mock_lambda_context):
         """Test successful Python code execution."""
         event = {
-            'type': 'python',
             'command': 'result = "Hello from Python"'
-        }
-        
-        with patch('tool_handler.execute_python_code') as mock_python:
-            mock_python.return_value = 'Hello from Python'
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 200
-            body = json.loads(result['body'])
-            assert body['success'] is True
-            assert body['output'] == 'Hello from Python'
-    
-    def test_handler_unknown_type(self, mock_lambda_context):
-        """Test handling of unknown command type."""
-        event = {
-            'type': 'unknown',
-            'command': 'test'
         }
         
         result = handler(event, mock_lambda_context)
         
-        assert result['statusCode'] == 400
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        assert 'Hello from Python' in body['output'] or 'Hello from Python' in body['result']
+    
+    def test_handler_boto3_execution(self, mock_lambda_context):
+        """Test boto3 code execution."""
+        event = {
+            'command': '''
+sts = boto3.client('sts')
+result = {"account": "123456789012", "user": "test-user"}'''
+        }
+        
+        with patch('boto3.client') as mock_client:
+            mock_sts = Mock()
+            mock_sts.get_caller_identity.return_value = {
+                'UserId': 'AIDAI23EXAMPLE',
+                'Account': '123456789012',
+                'Arn': 'arn:aws:iam::123456789012:user/test-user'
+            }
+            mock_client.return_value = mock_sts
+            
+            result = handler(event, mock_lambda_context)
+            
+            assert result['statusCode'] == 200
+            body = json.loads(result['body'])
+            assert body['success'] is True
+    
+    def test_handler_empty_command(self, mock_lambda_context):
+        """Test handling of empty command."""
+        event = {
+            'command': ''
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        # Empty command should still succeed but with minimal output
+        assert body['success'] is True
+    
+    def test_handler_python_error(self, mock_lambda_context):
+        """Test handling of Python execution errors."""
+        event = {
+            'command': 'raise ValueError("Test error")'
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert body['success'] is False
-        assert 'Unknown command type' in body['output']
+        assert 'ValueError' in body['output']
     
-    def test_handler_timeout(self, mock_lambda_context):
-        """Test handling of command timeout."""
+    def test_handler_syntax_error(self, mock_lambda_context):
+        """Test handling of Python syntax errors."""
         event = {
-            'type': 'cli',
-            'command': 'sleep 60'
+            'command': 'invalid python syntax here!@#$'
         }
         
-        with patch('tool_handler.execute_cli_command') as mock_cli:
-            mock_cli.side_effect = subprocess.TimeoutExpired('sleep 60', 30)
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 408
-            body = json.loads(result['body'])
-            assert body['success'] is False
-            assert 'timed out' in body['output']
-    
-    def test_handler_exception(self, mock_lambda_context):
-        """Test handling of unexpected exceptions."""
-        event = {
-            'type': 'cli',
-            'command': 'aws s3 ls'
-        }
+        result = handler(event, mock_lambda_context)
         
-        with patch('tool_handler.execute_cli_command') as mock_cli:
-            mock_cli.side_effect = Exception("Unexpected error")
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 500
-            body = json.loads(result['body'])
-            assert body['success'] is False
-            assert 'Unexpected error' in body['output']
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is False
+        assert 'SyntaxError' in body['output'] or 'invalid syntax' in body['output']
     
     def test_handler_output_truncation(self, mock_lambda_context):
-        """Test that large outputs are truncated."""
+        """Test that large outputs are NOT truncated anymore."""
         event = {
-            'type': 'python',
             'command': 'result = "A" * 60000'  # 60KB of data
         }
         
@@ -104,132 +96,136 @@ class TestToolHandler:
         
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
-        assert len(body['output']) <= 51000  # Should be truncated
-        assert 'truncated' in body['output']
+        # Check that output is NOT truncated (should have full 60KB)
+        assert len(body.get('result', '')) == 60000 or len(body.get('output', '')) == 60000
+        # Should NOT contain truncation message
+        if 'result' in body:
+            assert 'truncated' not in body['result']
+        if 'output' in body:
+            assert 'truncated' not in body['output']
     
-    def test_execute_cli_command_success(self):
-        """Test successful CLI command execution."""
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=0,
-                stdout='Command output',
-                stderr=''
-            )
-            
-            result = execute_cli_command('aws sts get-caller-identity')
-            
-            assert result == 'Command output'
-            mock_run.assert_called_once()
+    def test_execute_python_code_with_result(self):
+        """Test Python code execution with result variable."""
+        code = '''
+result = {"status": "success", "value": 42}
+'''
+        result_dict = execute_python_code(code)
+        
+        assert result_dict['success'] is True
+        assert '"status": "success"' in result_dict['result']
+        assert result_dict['execution_time'] > 0
     
-    def test_execute_cli_command_failure(self):
-        """Test CLI command failure handling."""
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=1,
-                stdout='',
-                stderr='Access denied'
-            )
-            
-            result = execute_cli_command('aws ec2 describe-instances')
-            
-            assert 'Command failed' in result
-            assert 'Access denied' in result
+    def test_execute_python_code_with_print(self):
+        """Test Python code execution with print statements."""
+        code = '''
+print("Starting process...")
+for i in range(3):
+    print(f"Step {i+1}")
+print("Complete!")
+result = "Done"
+'''
+        result_dict = execute_python_code(code)
+        
+        assert result_dict['success'] is True
+        assert 'Starting process' in result_dict['stdout']
+        assert 'Step 1' in result_dict['stdout']
+        assert 'Complete!' in result_dict['stdout']
+        assert result_dict['result'] == 'Done'
     
-    def test_execute_cli_command_with_error(self):
-        """Test CLI command that returns an error code."""
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=1,
-                stdout='',
-                stderr='AccessDenied: User is not authorized'
-            )
+    def test_execute_python_code_boto3_usage(self):
+        """Test Python code using pre-imported boto3."""
+        code = '''
+# No import needed - boto3 is pre-imported
+client = boto3.client('sts')
+result = "STS client created"
+'''
+        with patch('boto3.client') as mock_client:
+            mock_client.return_value = Mock()
+            result_dict = execute_python_code(code)
             
-            result = execute_cli_command('aws ec2 terminate-instances --instance-ids i-123')
-            
-            # Should return the error information, not block it
-            assert 'Command failed' in result
-            assert 'AccessDenied' in result
+            assert result_dict['success'] is True
+            assert result_dict['result'] == 'STS client created'
     
-    def test_execute_cli_command_various_commands(self):
-        """Test execution of various commands."""
-        commands = [
-            'aws sts get-caller-identity',
-            'aws ec2 describe-instances', 
-            'aws logs describe-log-groups',
-            'date',
-            'echo test'
+    def test_execute_python_code_various_operations(self):
+        """Test execution of various Python operations."""
+        operations = [
+            ('result = datetime.now().isoformat()', 'datetime'),
+            ('result = json.dumps({"test": True})', 'json'),
+            ('result = base64.b64encode(b"test").decode()', 'base64'),
+            ('result = hashlib.sha256(b"test").hexdigest()', 'hashlib'),
+            ('result = uuid.uuid4().hex', 'uuid')
         ]
         
-        for cmd in commands:
-            with patch('tool_handler.subprocess.run') as mock_run:
-                mock_run.return_value = Mock(returncode=0, stdout='command output', stderr='')
-                result = execute_cli_command(cmd)
-                assert 'command output' in result or 'Command executed successfully' in result
+        for code, module in operations:
+            result_dict = execute_python_code(code)
+            assert result_dict['success'] is True
+            assert result_dict['result'] is not None
     
-    def test_execute_python_code_success(self):
-        """Test successful Python code execution."""
+    def test_execute_python_code_json_operations(self):
+        """Test Python code with json operations."""
         code = """
-import json
-data = {'key': 'value'}
-result = json.dumps(data)
+# json is pre-imported, no need to import
+data = {'key': 'value', 'number': 42}
+result = json.dumps(data, indent=2)
 """
-        result = execute_python_code(code)
-        assert 'key' in result and 'value' in result
-    
-    def test_execute_python_code_print_capture(self):
-        """Test that print statements are captured."""
-        code = """
-print("Hello")
-print("World")
-"""
-        result = execute_python_code(code)
-        assert 'Hello' in result
-        assert 'World' in result
-    
-    def test_execute_python_code_boto3_operations(self):
-        """Test Python code with boto3 operations."""
-        code = """
-import boto3
-client = boto3.client('ec2')
-try:
-    # This would fail with AccessDenied in real execution due to IAM
-    response = client.terminate_instances(InstanceIds=['i-123'])
-    result = "Should not reach here"
-except Exception as e:
-    result = f"Expected IAM error: {type(e).__name__}"
-"""
-        result = execute_python_code(code)
-        # In test environment, boto3 operations work but in production IAM would block
-        assert result is not None
-    
-    def test_execute_python_code_boto3_access(self):
-        """Test that boto3 is available in Python execution."""
-        code = """
-import boto3
-result = str(type(boto3))
-"""
-        result = execute_python_code(code)
-        assert 'module' in result
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is True
+        assert 'key' in result_dict['result']
+        assert 'value' in result_dict['result']
     
     def test_execute_python_code_error_handling(self):
-        """Test Python execution error handling."""
+        """Test Python code error handling."""
+        code = """
+raise ValueError("Test error")
+"""
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is False
+        assert 'ValueError' in result_dict['stderr']
+        assert 'Test error' in result_dict['stderr']
+    
+    def test_execute_python_code_pre_imported_modules(self):
+        """Test that pre-imported modules work correctly."""
+        code = """
+# Test various pre-imported modules
+dt = datetime.now()
+td = timedelta(days=1)
+pattern = re.compile(r'\\d+')
+result = f"Modules work: datetime={dt.year}, timedelta={td.days}, re={bool(pattern)}"
+"""
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is True
+        assert 'Modules work' in result_dict['result']
+    
+    def test_execute_python_code_no_import_needed(self):
+        """Test that modules work without import statements."""
+        code = """
+# boto3 is pre-imported, no import needed
+result = str(type(boto3))
+"""
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is True
+        assert 'module' in result_dict['result']
+    
+    def test_execute_python_code_name_error(self):
+        """Test Python execution name error handling."""
         code = """
 # This will cause a NameError
 result = undefined_variable
 """
-        result = execute_python_code(code)
-        assert 'Python execution error' in result
-        assert 'NameError' in result
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is False
+        assert 'NameError' in result_dict['stderr']
     
     def test_execute_python_code_json_result(self):
         """Test that dict/list results are JSON formatted."""
         code = """
 result = {'name': 'test', 'values': [1, 2, 3]}
 """
-        result = execute_python_code(code)
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is True
         # Should be formatted JSON
-        assert '"name": "test"' in result
-        assert '"values": [' in result
+        assert '"name": "test"' in result_dict['result']
+        assert '"values": [' in result_dict['result']
     
     def test_execute_python_code_no_result(self):
         """Test handling when no result variable is set."""
@@ -237,20 +233,27 @@ result = {'name': 'test', 'values': [1, 2, 3]}
 x = 5
 y = 10
 z = x + y
+print(f"Sum is {z}")
 """
-        result = execute_python_code(code)
-        assert "Set 'result' variable to return output" in result
+        result_dict = execute_python_code(code)
+        assert result_dict['success'] is True
+        assert result_dict['result'] is None
+        assert 'Sum is 15' in result_dict['stdout']
     
-    def test_execute_cli_command_aws_pager_disabled(self):
-        """Test that AWS pager is disabled for CLI commands."""
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.return_value = Mock(returncode=0, stdout='output', stderr='')
-            
-            execute_cli_command('aws s3 ls')
-            
-            # Check that AWS_PAGER is set to empty string
-            call_env = mock_run.call_args[1]['env']
-            assert call_env['AWS_PAGER'] == ''
+    def test_execute_python_code_boto3_client_creation(self):
+        """Test boto3 client creation without imports."""
+        code = """
+# Create various boto3 clients
+ec2 = boto3.client('ec2')
+s3 = boto3.client('s3')
+sts = boto3.client('sts')
+result = "Clients created successfully"
+"""
+        with patch('boto3.client') as mock_client:
+            mock_client.return_value = Mock()
+            result_dict = execute_python_code(code)
+            assert result_dict['success'] is True
+            assert result_dict['result'] == 'Clients created successfully'
     
     def test_execute_python_code_builtins_available(self):
         """Test that standard builtins are available."""
@@ -262,7 +265,8 @@ result = {
     'type_test': str(type([]))
 }
 """
-        result = execute_python_code(safe_code)
-        assert '3' in result
-        assert '123' in result
-        assert 'list' in result
+        result_dict = execute_python_code(safe_code)
+        assert result_dict['success'] is True
+        assert '3' in result_dict['result']
+        assert '123' in result_dict['result']
+        assert 'list' in result_dict['result']

@@ -3,50 +3,50 @@ import json
 import logging
 import os
 import time
+import re
 
 logger = logging.getLogger()
 
 class BedrockAgentClient:
-    def __init__(self, model_id, tool_lambda_arn, max_tokens):
+    def __init__(self, model_id, tool_lambda_arn):
         region = os.environ.get('BEDROCK_REGION')
         if not region:
             region = os.environ.get('AWS_REGION', 'us-east-2')
         logger.info(f"Initializing Bedrock client in region: {region}")
         from botocore.config import Config
         config = Config(
-            read_timeout=300,  # 5 minutes read timeout to handle long Claude responses
+            read_timeout=300,  # 5 minutes read timeout to handle long model responses
             connect_timeout=10,
             retries={'max_attempts': 0}
         )
         self.bedrock = boto3.client(
             'bedrock-runtime', 
             region_name=region,
-            config=config,
-            endpoint_url=f'https://bedrock-runtime.{region}.amazonaws.com'
+            config=config
         )
         self.lambda_client = boto3.client('lambda', region_name=region)
         self.model_id = model_id
         self.tool_lambda_arn = tool_lambda_arn
-        self.max_tokens = max_tokens
         
     def investigate_with_tools(self, prompt):
         try:
             tool_calls = []
             
-            def execute_tool(tool_input):
+            def execute_tool(command):
                 try:
-                    logger.info(f"Executing tool with input: {json.dumps(tool_input)}")
+                    logger.info(f"Executing Python tool with command: {command[:200]}...")
+                    
                     response = self.lambda_client.invoke(
                         FunctionName=self.tool_lambda_arn,
                         InvocationType='RequestResponse',
-                        Payload=json.dumps(tool_input)
+                        Payload=json.dumps({'command': command})
                     )
                     result = json.loads(response['Payload'].read())
                     
                     if response['StatusCode'] == 200:
                         body = json.loads(result.get('body', '{}'))
                         tool_calls.append({
-                            'input': tool_input,
+                            'input': {'command': command[:200]},
                             'output': body.get('output', 'No output')[:500]
                         })
                         return body
@@ -59,51 +59,63 @@ class BedrockAgentClient:
                     error_msg = f"Tool execution error: {str(e)}"
                     logger.error(error_msg, exc_info=True)
                     return {'success': False, 'output': error_msg}
+            
+            # Create the initial prompt with tool instructions
+            tool_prompt = f"""You are an AI assistant investigating AWS CloudWatch alarms with the ability to execute Python code.
+
+TOOL USAGE INSTRUCTIONS:
+When you need to execute Python code to investigate AWS resources, you MUST follow this exact format:
+
+1. First line must contain ONLY: TOOL: python_executor
+2. Immediately follow with a markdown code fence containing your Python code
+3. Do not include any text between the tool declaration and the code fence
+
+Example of correct format:
+TOOL: python_executor
+```python
+# Your investigation code here
+ec2 = boto3.client('ec2')
+response = ec2.describe_instances()
+print(response)
+result = {{"instances": response}}
+```
+
+IMPORTANT RULES:
+- The first line of your response must be "TOOL: python_executor" if you want to execute code
+- Use only one code fence per response
+- After receiving execution results, you can continue investigation or provide analysis
+- If you don't need to execute code, just respond normally without the TOOL: prefix
+- Always use print() statements to show investigation progress
+- Set 'result' variable with structured data for final output
+- All standard modules and boto3 are pre-imported - do NOT use import statements
+- You can make multiple tool calls to investigate thoroughly
+
+USER REQUEST:
+{prompt}"""
+            
+            # Initialize conversation with the tool-augmented prompt
             messages = [
                 {
                     "role": "user",
-                    "content": prompt
+                    "content": [{"text": tool_prompt}]
                 }
             ]
-            tools = [
-                {
-                    "name": "aws_investigator",
-                    "description": "Execute AWS CLI commands or Python/boto3 scripts to investigate AWS resources. The tool runs in an environment with AWS CLI v2 and Python 3.13 with boto3 pre-installed.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["cli", "python"],
-                                "description": "Type of command to execute: 'cli' for AWS CLI commands, 'python' for Python/boto3 scripts"
-                            },
-                            "command": {
-                                "type": "string",
-                                "description": "AWS CLI command (e.g., 'aws ec2 describe-instances') or Python code to execute. For Python, set a 'result' variable with the output."
-                            }
-                        },
-                        "required": ["type", "command"]
-                    }
-                }
-            ]
-            logger.info("Invoking Claude with tool support...")
-            max_iterations = 100  # Increased from 50 to ensure complete analysis
+            
+            logger.info("Invoking model with Converse API...")
+            max_iterations = 100  # Allow many iterations for thorough investigation
             final_response = ""
             retry_count = 0
             max_retries = 3
             
             for iteration in range(max_iterations):
                 try:
-                    response = self.bedrock.invoke_model(
+                    # Call the Converse API
+                    response = self.bedrock.converse(
                         modelId=self.model_id,
-                        body=json.dumps({
-                            "anthropic_version": "bedrock-2023-05-31",
-                            "messages": messages,
-                            "max_tokens": self.max_tokens,
-                            "temperature": 0.3,
-                            "tools": tools,
-                            "tool_choice": {"type": "auto"}
-                        })
+                        messages=messages,
+                        inferenceConfig={
+                            "temperature": 0.3
+                        }
                     )
                     retry_count = 0
                     
@@ -131,65 +143,57 @@ class BedrockAgentClient:
                     else:
                         logger.error(f"Non-retryable Bedrock error ({error_type}): {error_str}")
                         raise
-                result = json.loads(response['body'].read())
-                assistant_message = result.get('content', [])
+                
+                # Extract response text from Converse API response
+                response_message = response['output']['message']
+                response_text = response_message['content'][0]['text']
+                
+                # Add assistant's response to conversation history
                 messages.append({
                     "role": "assistant",
-                    "content": assistant_message
+                    "content": [{"text": response_text}]
                 })
-                # First pass: check if there are any tool uses
-                tool_use_found = False
-                tool_results = []
                 
-                for content_block in assistant_message:
-                    if content_block.get('type') == 'tool_use':
-                        tool_use_found = True
-                        break
-                
-                # Second pass: process the content blocks
-                for content_block in assistant_message:
-                    if content_block.get('type') == 'tool_use':
-                        tool_id = content_block.get('id')
-                        tool_name = content_block.get('name')
-                        tool_input = content_block.get('input', {})
+                # Check if the response contains a tool call
+                lines = response_text.strip().split('\n')
+                if lines and lines[0].strip().upper().startswith('TOOL: PYTHON_EXECUTOR'):
+                    # Extract code using regex
+                    code_match = re.search(r'```python\n(.*?)\n```', response_text, re.DOTALL)
+                    if code_match:
+                        code = code_match.group(1).strip()
+                        logger.info(f"Model requesting Python execution (iteration {iteration + 1})")
                         
-                        logger.info(f"Claude requesting tool: {tool_name}")
-                        if tool_name == 'aws_investigator':
-                            tool_result = execute_tool(tool_input)
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": json.dumps(tool_result)
-                            })
-                        else:
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": json.dumps({
-                                    "success": False,
-                                    "output": f"Unknown tool: {tool_name}"
-                                })
-                            })
-                    elif content_block.get('type') == 'text':
-                        text_content = content_block.get('text', '')
-                        if text_content:
-                            # Only capture text as final response when no tools are being used
-                            if not tool_use_found:
-                                final_response = text_content
-                                logger.info(f"Claude final response received (length: {len(text_content)} chars)")
-                            else:
-                                logger.info(f"Claude intermediate text (length: {len(text_content)} chars)")
-                if tool_use_found and tool_results:
-                    messages.append({
-                        "role": "user",
-                        "content": tool_results
-                    })
-                    time.sleep(0.5)
+                        # Execute the tool
+                        tool_result = execute_tool(code)
+                        
+                        # Add tool result to conversation
+                        tool_response = f"""Tool execution result:
+Success: {tool_result.get('success', False)}
+Output:
+{tool_result.get('output', 'No output')}"""
+                        
+                        messages.append({
+                            "role": "user",
+                            "content": [{"text": tool_response}]
+                        })
+                        
+                        # Small delay between tool calls
+                        time.sleep(0.5)
+                    else:
+                        logger.warning("Tool call detected but no code block found")
+                        messages.append({
+                            "role": "user",
+                            "content": [{"text": "Tool call detected but no code block found. Please provide the code in a markdown code fence."}]
+                        })
                 else:
+                    # No tool call, this is the final response
+                    final_response = response_text
+                    logger.info(f"Model final response received (length: {len(response_text)} chars)")
                     break
+            
             logger.info(f"Investigation complete. Tool calls made: {len(tool_calls)}")
             for i, call in enumerate(tool_calls[:5], 1):
-                logger.info(f"Tool call {i}: {call['input']['type']} - {call['input'].get('command', '')[:100]}")
+                logger.info(f"Tool call {i}: {call['input'].get('command', '')[:100]}")
             
             return final_response if final_response else "Investigation completed but no analysis was generated."
             
@@ -200,7 +204,7 @@ class BedrockAgentClient:
 Investigation Error
 ==================
 
-An error occurred while invoking Claude for investigation:
+An error occurred while invoking model for investigation:
 {str(e)}
 
 Please check the Lambda logs for more details.
@@ -209,5 +213,5 @@ Troubleshooting Steps:
 1. Verify Bedrock model access in your region
 2. Check IAM permissions for Bedrock invocation
 3. Ensure the tool Lambda is properly configured
-4. Verify Claude Opus 4.1 is available in your region
+4. Verify the configured Bedrock model is available in your region
 """

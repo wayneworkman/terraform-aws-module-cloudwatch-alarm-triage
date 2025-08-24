@@ -12,7 +12,8 @@ class TestBedrockClientEdgeCases:
     """Test edge cases for Bedrock client."""
     
     @patch('bedrock_client.boto3.client')
-    def test_tool_execution_with_complex_error_response(self, mock_boto3_client):
+    @patch('bedrock_client.time.sleep')
+    def test_tool_execution_with_complex_error_response(self, mock_sleep, mock_boto3_client):
         """Test tool execution when Lambda returns complex error structure."""
         mock_bedrock_client = Mock()
         mock_lambda_client = Mock()
@@ -22,21 +23,18 @@ class TestBedrockClientEdgeCases:
             'lambda': mock_lambda_client
         }.get(service_name, Mock())
         
-        # Mock Bedrock requesting tool
+        # Mock Bedrock requesting tool with Converse API format
         bedrock_response = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-1',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'cli', 'command': 'aws ec2 describe-instances'}
-                    }
-                ]
-            }).encode())
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'TOOL: python_executor\n```python\nec2 = boto3.client("ec2")\nresponse = ec2.describe_instances()\nprint(response)\n```'
+                    }]
+                }
+            }
         }
         
-        mock_bedrock_client.invoke_model.return_value = bedrock_response
+        mock_bedrock_client.converse.return_value = bedrock_response
         
         # Mock complex Lambda error response
         error_response = {
@@ -56,7 +54,7 @@ class TestBedrockClientEdgeCases:
         
         mock_lambda_client.invoke.return_value = error_response
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         
         # Should handle complex error response gracefully
         result = client.investigate_with_tools("Test prompt")
@@ -64,8 +62,9 @@ class TestBedrockClientEdgeCases:
         # Should exhaust iterations and return default message 
         assert "Investigation completed but no analysis was generated" in result
     
-    @patch('bedrock_client.boto3.client')  
-    def test_tool_execution_lambda_timeout_scenario(self, mock_boto3_client):
+    @patch('bedrock_client.boto3.client')
+    @patch('bedrock_client.time.sleep')
+    def test_tool_execution_lambda_timeout_scenario(self, mock_sleep, mock_boto3_client):
         """Test tool execution when Lambda times out."""
         mock_bedrock_client = Mock()
         mock_lambda_client = Mock()
@@ -75,33 +74,29 @@ class TestBedrockClientEdgeCases:
             'lambda': mock_lambda_client
         }.get(service_name, Mock())
         
-        # Mock Bedrock requesting tool then final response
+        # Mock Bedrock requesting tool then final response with Converse API
         bedrock_responses = [
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-1', 
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws logs filter-log-events --log-group /aws/lambda/test'}
-                        }
-                    ]
-                }).encode())
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\nlogs = boto3.client("logs")\nresponse = logs.filter_log_events(logGroupName="/aws/lambda/test")\nprint(response)\n```'
+                        }]
+                    }
+                }
             },
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'text',
+                'output': {
+                    'message': {
+                        'content': [{
                             'text': 'Continuing analysis despite tool timeout.'
-                        }
-                    ]
-                }).encode())
+                        }]
+                    }
+                }
             }
         ]
         
-        mock_bedrock_client.invoke_model.side_effect = bedrock_responses
+        mock_bedrock_client.converse.side_effect = bedrock_responses
         
         # Mock Lambda timeout exception
         from botocore.exceptions import ClientError
@@ -111,14 +106,15 @@ class TestBedrockClientEdgeCases:
         )
         mock_lambda_client.invoke.side_effect = timeout_error
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
         # Should complete despite tool error
         assert 'Continuing analysis despite tool timeout' in result
     
     @patch('bedrock_client.boto3.client')
-    def test_bedrock_response_parsing_edge_cases(self, mock_boto3_client):
+    @patch('bedrock_client.time.sleep')
+    def test_bedrock_response_parsing_edge_cases(self, mock_sleep, mock_boto3_client):
         """Test parsing of various Bedrock response formats."""
         mock_bedrock_client = Mock()
         mock_lambda_client = Mock()
@@ -128,16 +124,12 @@ class TestBedrockClientEdgeCases:
             'lambda': mock_lambda_client
         }.get(service_name, Mock())
         
-        # Test malformed JSON response 
-        malformed_response = {
-            'body': Mock(read=lambda: b'{"incomplete": json')
-        }
+        # Test exception from Converse API (simulating malformed response)
+        mock_bedrock_client.converse.side_effect = json.JSONDecodeError("Expecting value", "doc", 0)
         
-        mock_bedrock_client.invoke_model.return_value = malformed_response
-        
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
         # Should handle malformed response gracefully with fallback message
         assert "Investigation Error" in result
-        assert "An error occurred while invoking Claude" in result
+        assert "An error occurred while invoking model" in result

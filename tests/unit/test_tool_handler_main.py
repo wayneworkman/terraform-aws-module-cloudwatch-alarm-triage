@@ -22,7 +22,6 @@ class TestToolHandlerMain:
         
         # Verify main block exists
         assert 'if __name__ == "__main__":' in source_code
-        assert 'test_event_cli' in source_code
-        assert 'test_event_python' in source_code
-        assert 'aws sts get-caller-identity' in source_code
-        assert 'boto3.client(\'sts\')' in source_code
+        assert 'test_event' in source_code
+        assert 'boto3.client' in source_code
+        assert 'lambda_handler' in source_code

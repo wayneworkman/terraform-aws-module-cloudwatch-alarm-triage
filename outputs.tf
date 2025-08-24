@@ -38,12 +38,22 @@ output "tool_lambda_log_group" {
   value       = aws_cloudwatch_log_group.tool_lambda.name
 }
 
-output "bedrock_inference_profile_arn" {
-  description = "ARN of the system-defined Bedrock inference profile for Claude Opus 4.1"
-  value       = local.inference_profile_arn
+output "bedrock_model_id" {
+  description = "The Bedrock model ID being used"
+  value       = var.bedrock_model_id
 }
 
 output "dynamodb_table_name" {
   description = "Name of the DynamoDB table for deduplication"
   value       = aws_dynamodb_table.alarm_investigations.name
+}
+
+output "reports_bucket_name" {
+  description = "Name of the S3 bucket storing investigation reports"
+  value       = aws_s3_bucket.investigation_reports.id
+}
+
+output "reports_bucket_arn" {
+  description = "ARN of the S3 bucket storing investigation reports"
+  value       = aws_s3_bucket.investigation_reports.arn
 }

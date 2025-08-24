@@ -12,11 +12,8 @@ module "cloudwatch_triage" {
   
   # Claude Opus 4.1 configuration
   # Using the inference profile - IAM policy restricts to us-east-2 only
-  bedrock_model_id = "us.anthropic.claude-opus-4-1-20250805-v1:0"
-  
-  # Use higher token limit for detailed permission analysis
-  max_tokens_per_investigation = 20000
-  investigation_depth          = "detailed"  # Changed from comprehensive to detailed
+  # bedrock_model_id = "us.anthropic.claude-opus-4-1-20250805-v1:0"
+  bedrock_model_id = "us.amazon.nova-premier-v1:0"
   
   tags = {
     Environment = "Demo"

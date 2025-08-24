@@ -1,66 +1,52 @@
 import pytest
 import json
 from unittest.mock import Mock, patch
-import subprocess
 import sys
 import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tool-lambda')))
 
-from tool_handler import handler, execute_cli_command, execute_python_code
+from tool_handler import handler, lambda_handler, execute_python_code
 
 class TestToolHandlerEdgeCases:
     """Test edge cases and error scenarios for tool handler."""
     
-    def test_cli_command_no_output(self, mock_lambda_context):
-        """Test CLI command that completes successfully but produces no output."""
+    def test_python_code_no_output(self, mock_lambda_context):
+        """Test Python code that completes successfully but produces no output."""
         event = {
-            'type': 'cli',
-            'command': 'aws sts get-caller-identity'
+            'command': 'x = 5; y = 10'  # No result or print
         }
         
-        with patch('tool_handler.subprocess.run') as mock_run:
-            # Command succeeds but no stdout
-            mock_run.return_value = Mock(
-                returncode=0,
-                stdout='',
-                stderr=''
-            )
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 200
-            body = json.loads(result['body'])
-            assert body['success'] is True
-            assert 'Command executed successfully with no output' in body['output']
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        assert body['result'] is None
+        assert body['stdout'] == ''
     
-    def test_cli_command_stdout_and_stderr(self, mock_lambda_context):
-        """Test CLI command that returns both stdout and stderr."""
+    def test_python_code_with_print_and_result(self, mock_lambda_context):
+        """Test Python code that has both print output and result."""
         event = {
-            'type': 'cli',
-            'command': 'aws ec2 describe-instances'
+            'command': '''
+print("Processing...")
+result = {"status": "complete", "value": 42}
+print("Done!")
+'''
         }
         
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=1,
-                stdout='Partial data from stdout',
-                stderr='Warning: Some deprecation notice'
-            )
-            
-            result = handler(event, mock_lambda_context)
-            
-            assert result['statusCode'] == 200
-            body = json.loads(result['body'])
-            assert body['success'] is True
-            assert 'Command failed with exit code 1' in body['output']
-            assert 'Warning: Some deprecation notice' in body['output']
-            assert 'Partial data from stdout' in body['output']
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        assert 'Processing...' in body['stdout']
+        assert 'Done!' in body['stdout']
+        assert '"status": "complete"' in body['result']
     
     def test_python_code_stdout_restoration_on_exception(self, mock_lambda_context):
         """Test that stdout is restored even when Python execution throws exception."""
         event = {
-            'type': 'python',
             'command': 'raise ValueError("Test exception")'
         }
         
@@ -73,79 +59,175 @@ class TestToolHandlerEdgeCases:
         # Check stdout was restored
         assert sys.stdout is original_stdout
         
-        assert result['statusCode'] == 200  # Handler doesn't fail
+        assert result['statusCode'] == 200  # Error status
         body = json.loads(result['body'])
-        assert body['success'] is True
-        assert 'Python execution error' in body['output']
-        assert 'ValueError: Test exception' in body['output']
+        assert body['success'] is False
+        assert 'ValueError' in body['output']
+        assert 'Test exception' in body['output']
     
-    def test_execute_cli_command_subprocess_exception(self):
-        """Test CLI command execution when subprocess raises unexpected exception."""
-        with patch('tool_handler.subprocess.run') as mock_run:
-            mock_run.side_effect = OSError("Permission denied")
-            
-            result = execute_cli_command('aws sts get-caller-identity')
-            
-            assert 'Failed to execute command' in result
-            assert 'Permission denied' in result
-    
-    def test_execute_python_code_complex_namespace_operations(self):
-        """Test Python execution with complex namespace operations."""
-        code = """
-# Test complex operations with the restricted namespace
-import json
-data = {'items': [1, 2, 3]}
-processed = [item * 2 for item in data['items']]
-result = {
-    'original': data,
-    'processed': processed,
-    'summary': f"Processed {len(processed)} items"
-}
-"""
-        result = execute_python_code(code)
-        
-        # Should handle complex operations correctly
-        assert '"original"' in result
-        assert '"processed"' in result
-        assert '"summary"' in result
-        assert 'Processed 3 items' in result
-    
-    def test_python_code_import_error_handling(self):
-        """Test Python code execution when imports fail."""
-        code = """
-try:
-    import nonexistent_module
-    result = "Should not reach here"
-except ImportError as e:
-    result = f"Import failed as expected: {type(e).__name__}"
-"""
-        result = execute_python_code(code)
-        
-        assert 'Import failed as expected' in result
-        assert 'ModuleNotFoundError' in result
-    
-    def test_handler_missing_command_field(self, mock_lambda_context):
-        """Test handler behavior when command field is missing."""
+    def test_python_code_syntax_error(self, mock_lambda_context):
+        """Test handling of Python syntax errors."""
         event = {
-            'type': 'cli'
-            # Missing 'command' field
+            'command': 'def broken syntax here'
         }
         
         result = handler(event, mock_lambda_context)
         
-        # Should handle gracefully
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
-        # Should execute empty command and likely get an error, but not crash
-        assert body['success'] is True
+        assert body['success'] is False
+        assert 'SyntaxError' in body['output'] or 'invalid syntax' in body['output']
     
-    def test_handler_empty_event(self, mock_lambda_context):
-        """Test handler with completely empty event."""
-        event = {}
+    def test_python_code_undefined_variable(self, mock_lambda_context):
+        """Test handling of undefined variable access."""
+        event = {
+            'command': 'result = undefined_var * 2'
+        }
         
         result = handler(event, mock_lambda_context)
         
-        # Should default to 'cli' type and empty command
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is False
+        assert 'NameError' in body['output']
+    
+    def test_execute_python_code_complex_namespace_operations(self, mock_lambda_context):
+        """Test complex namespace operations in Python execution."""
+        code = '''
+# Test namespace isolation
+local_var = 100
+globals_before = len(globals())
+locals_before = len(locals())
+
+# Test that builtins work
+result = {
+    'sum': sum([1, 2, 3]),
+    'max': max([5, 2, 8]),
+    'sorted': sorted([3, 1, 2])
+}
+'''
+        result_dict = execute_python_code(code)
+        
+        assert result_dict['success'] is True
+        assert '"sum": 6' in result_dict['result']
+        assert '"max": 8' in result_dict['result']
+        # JSON formatting might vary, check values are present
+        assert '"sum": 6' in result_dict['result']
+        assert '"max": 8' in result_dict['result']
+        assert '1' in result_dict['result'] and '2' in result_dict['result'] and '3' in result_dict['result']
+    
+    def test_python_code_module_usage_without_import(self, mock_lambda_context):
+        """Test that pre-imported modules work without import statements."""
+        event = {
+            'command': '''
+# Use pre-imported modules directly
+dt = datetime.now()
+b64 = base64.b64encode(b"test").decode()
+uid = uuid.uuid4().hex[:8]
+result = f"datetime={dt.year}, base64={b64}, uuid_len={len(uid)}"
+'''
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert body['success'] is True
+        assert 'datetime=' in body['result']
+        assert 'base64=dGVzdA==' in body['result']
+        assert 'uuid_len=8' in body['result']
+    
+    def test_python_code_boto3_client_error_handling(self, mock_lambda_context):
+        """Test handling of boto3 client errors."""
+        event = {
+            'command': '''
+try:
+    s3 = boto3.client('s3')
+    # This would fail with access denied in real execution
+    s3.get_object(Bucket='restricted-bucket', Key='secret.txt')
+    result = "Should not reach here"
+except Exception as e:
+    result = f"Expected error: {type(e).__name__}"
+'''
+        }
+        
+        with patch('boto3.client') as mock_client:
+            mock_s3 = Mock()
+            mock_s3.get_object.side_effect = Exception("AccessDenied")
+            mock_client.return_value = mock_s3
+            
+            result = handler(event, mock_lambda_context)
+            
+            assert result['statusCode'] == 200
+            body = json.loads(result['body'])
+            assert body['success'] is True
+            assert 'Expected error' in body['result']
+    
+    def test_large_output_truncation(self, mock_lambda_context):
+        """Test that large outputs are NOT truncated anymore."""
+        event = {
+            'command': 'result = "X" * 60000'  # 60KB of data
+        }
+        
+        # MAX_OUTPUT_SIZE env var is no longer used
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        # Check that result is NOT truncated (full 60KB)
+        assert len(body['result']) == 60000
+        # Should NOT contain truncation message
+        assert 'truncated' not in body['result']
+    
+    def test_empty_command(self, mock_lambda_context):
+        """Test handling of empty command."""
+        event = {
+            'command': ''
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        # Empty command executes successfully but produces no output
+        assert body['result'] is None
+        assert body['stdout'] == ''
+    
+    def test_multiline_code_with_indentation(self, mock_lambda_context):
+        """Test execution of properly indented multiline code."""
+        event = {
+            'command': '''
+def calculate(x, y):
+    if x > y:
+        return x * 2
+    else:
+        return y * 2
+
+result = calculate(5, 3)
+'''
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is True
+        assert body['result'] == '10'
+    
+    def test_exception_during_module_usage(self, mock_lambda_context):
+        """Test handling of exceptions when using pre-imported modules."""
+        event = {
+            'command': '''
+# This should cause a ValueError
+result = json.loads("not valid json")
+'''
+        }
+        
+        result = handler(event, mock_lambda_context)
+        
+        assert result['statusCode'] == 200
+        body = json.loads(result['body'])
+        assert body['success'] is False
+        assert 'JSONDecodeError' in body['output'] or 'ValueError' in body['output']

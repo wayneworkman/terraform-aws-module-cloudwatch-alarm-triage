@@ -4,7 +4,6 @@ data "aws_region" "current" {}
 locals {
   resource_name_prefix = var.resource_prefix != "" ? "${var.resource_prefix}-" : ""
   resource_name_suffix = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
-  inference_profile_arn = "arn:aws:bedrock:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-opus-4-1-20250805-v1:0"
 }
 
 resource "aws_dynamodb_table" "alarm_investigations" {
@@ -23,6 +22,85 @@ resource "aws_dynamodb_table" "alarm_investigations" {
   }
   
   tags = var.tags
+}
+
+# Random suffix for S3 bucket uniqueness
+resource "random_string" "bucket_suffix" {
+  length  = 4
+  special = false
+  upper   = false
+  numeric = true
+  lower   = true
+}
+
+# S3 bucket for investigation reports
+resource "aws_s3_bucket" "investigation_reports" {
+  bucket = "${local.resource_name_prefix}alarm-reports-${random_string.bucket_suffix.result}"
+  
+  tags = var.tags
+}
+
+# Enable versioning
+resource "aws_s3_bucket_versioning" "investigation_reports" {
+  bucket = aws_s3_bucket.investigation_reports.id
+  
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Enable encryption with SSE-S3
+resource "aws_s3_bucket_server_side_encryption_configuration" "investigation_reports" {
+  bucket = aws_s3_bucket.investigation_reports.id
+  
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+# Block all public access
+resource "aws_s3_bucket_public_access_block" "investigation_reports" {
+  bucket = aws_s3_bucket.investigation_reports.id
+  
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Optional access logging
+resource "aws_s3_bucket_logging" "investigation_reports" {
+  count = var.reports_bucket_logging != null ? 1 : 0
+  
+  bucket = aws_s3_bucket.investigation_reports.id
+  
+  target_bucket = var.reports_bucket_logging.target_bucket
+  target_prefix = var.reports_bucket_logging.target_prefix
+}
+
+# Optional lifecycle configuration
+resource "aws_s3_bucket_lifecycle_configuration" "investigation_reports" {
+  count = var.reports_bucket_lifecycle_days != null ? 1 : 0
+  
+  bucket = aws_s3_bucket.investigation_reports.id
+  
+  rule {
+    id     = "delete-old-reports"
+    status = "Enabled"
+    
+    # Delete current versions after specified days
+    expiration {
+      days = var.reports_bucket_lifecycle_days
+    }
+    
+    # Delete non-current versions after specified days
+    noncurrent_version_expiration {
+      noncurrent_days = var.reports_bucket_lifecycle_days
+    }
+  }
 }
 
 resource "random_id" "lambda_hash" {
@@ -91,8 +169,7 @@ resource "aws_iam_role_policy" "triage_lambda_policy" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          local.inference_profile_arn,
-          "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-1-20250805-v1:0",
+          "arn:aws:bedrock:*::foundation-model/*",
           "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*"
         ]
       },
@@ -117,6 +194,13 @@ resource "aws_iam_role_policy" "triage_lambda_policy" {
           "dynamodb:PutItem"
         ]
         Resource = aws_dynamodb_table.alarm_investigations.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.investigation_reports.arn}/*"
       }
     ]
   })
@@ -208,15 +292,13 @@ resource "aws_lambda_function" "triage_handler" {
   
   environment {
     variables = {
-      BEDROCK_MODEL_ID            = local.inference_profile_arn
-      BEDROCK_AGENT_MODE          = "true"
+      BEDROCK_MODEL_ID            = var.bedrock_model_id
       TOOL_LAMBDA_ARN             = aws_lambda_function.tool_lambda.arn
       SNS_TOPIC_ARN               = var.sns_topic_arn
-      INVESTIGATION_DEPTH         = var.investigation_depth
-      MAX_TOKENS                  = tostring(var.max_tokens_per_investigation)
       BEDROCK_REGION              = data.aws_region.current.region
       DYNAMODB_TABLE              = aws_dynamodb_table.alarm_investigations.name
       INVESTIGATION_WINDOW_HOURS  = tostring(var.investigation_window_hours)
+      REPORTS_BUCKET              = aws_s3_bucket.investigation_reports.id
     }
   }
   

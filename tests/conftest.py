@@ -56,11 +56,8 @@ def mock_environment():
     """Mock environment variables."""
     env = {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
-        'BEDROCK_AGENT_MODE': 'true',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
         'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000',
         'AWS_DEFAULT_REGION': 'us-east-2'
     }
     return env

@@ -17,9 +17,7 @@ class TestProductionReadiness:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     def test_bedrock_failure_fallback(self, sample_alarm_event, mock_lambda_context):
         """Test that Bedrock failures provide useful fallback analysis."""
@@ -60,24 +58,27 @@ class TestProductionReadiness:
         # Setup throttling then success
         throttling_error = Exception("ThrottlingException: Request was throttled")
         success_response = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [{'type': 'text', 'text': 'Analysis complete'}]
-            }).encode())
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'Analysis complete'
+                    }]
+                }
+            }
         }
-        
-        mock_bedrock_client.invoke_model.side_effect = [
+        mock_bedrock_client.converse.side_effect = [
             throttling_error,  # First call fails
             success_response   # Retry succeeds
         ]
         
         with patch('bedrock_client.time.sleep') as mock_sleep:
-            client = BedrockAgentClient('test-model', 'test-arn', 1000)
+            client = BedrockAgentClient('test-model', 'test-arn')
             
             # This should retry and succeed
             result = client.investigate_with_tools("Test prompt")
             
             assert result == 'Analysis complete'
-            assert mock_bedrock_client.invoke_model.call_count == 2
+            assert mock_bedrock_client.converse.call_count == 2
             mock_sleep.assert_called_once_with(2)  # First retry delay
     
     @patch('bedrock_client.boto3.client')
@@ -93,10 +94,10 @@ class TestProductionReadiness:
         
         # Always return throttling error
         throttling_error = Exception("ThrottlingException: Request was throttled")
-        mock_bedrock_client.invoke_model.side_effect = throttling_error
+        mock_bedrock_client.converse.side_effect = throttling_error
         
         with patch('bedrock_client.time.sleep') as mock_sleep:
-            client = BedrockAgentClient('test-model', 'test-arn', 1000)
+            client = BedrockAgentClient('test-model', 'test-arn')
             
             # Should eventually return fallback after max retries
             result = client.investigate_with_tools("Test prompt")
@@ -105,7 +106,7 @@ class TestProductionReadiness:
             assert "Investigation Error" in result
             assert "ThrottlingException" in result
             # Should try initial + 3 retries = 4 total calls
-            assert mock_bedrock_client.invoke_model.call_count == 4
+            assert mock_bedrock_client.converse.call_count == 4
             # Should have 3 sleep calls (for 3 retries)
             assert mock_sleep.call_count == 3
     
@@ -122,10 +123,10 @@ class TestProductionReadiness:
         
         # Non-throttling error
         validation_error = Exception("ValidationException: Invalid model ID")
-        mock_bedrock_client.invoke_model.side_effect = validation_error
+        mock_bedrock_client.converse.side_effect = validation_error
         
         with patch('bedrock_client.time.sleep') as mock_sleep:
-            client = BedrockAgentClient('test-model', 'test-arn', 1000)
+            client = BedrockAgentClient('test-model', 'test-arn')
             
             # Should return fallback immediately
             result = client.investigate_with_tools("Test prompt")
@@ -134,7 +135,7 @@ class TestProductionReadiness:
             assert "Investigation Error" in result
             assert "ValidationException" in result
             # Should only try once
-            assert mock_bedrock_client.invoke_model.call_count == 1
+            assert mock_bedrock_client.converse.call_count == 1
             # Should not sleep/retry
             mock_sleep.assert_not_called()
     
@@ -152,35 +153,31 @@ class TestProductionReadiness:
         # Mock Bedrock requesting tool then providing final response
         bedrock_responses = [
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-1',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws logs filter-log-events'}
-                        }
-                    ]
-                }).encode())
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\nlogs = boto3.client(\"logs\"); result = \"log events\"\n```'
+                        }]
+                    }
+                }
             },
             {
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'text',
+                'output': {
+                    'message': {
+                        'content': [{
                             'text': 'Tool timed out but continuing with basic analysis based on alarm data.'
-                        }
-                    ]
-                }).encode())
+                        }]
+                    }
+                }
             }
         ]
         
-        mock_bedrock_client.invoke_model.side_effect = bedrock_responses
+        mock_bedrock_client.converse.side_effect = bedrock_responses
         
         # Mock Lambda timeout
         mock_lambda_client.invoke.side_effect = Exception("Lambda timeout")
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
         # Should handle timeout gracefully and continue
@@ -190,9 +187,8 @@ class TestProductionReadiness:
         """Test tool Lambda handles large outputs and memory constraints."""
         from tool_handler import handler as tool_handler
         
-        # Test large output truncation
+        # Test large output handling (no longer truncated)
         event = {
-            'type': 'python',
             'command': 'result = "A" * 100000'  # 100KB of data
         }
         
@@ -200,23 +196,21 @@ class TestProductionReadiness:
         
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
-        # Should be truncated
-        assert len(body['output']) <= 51000
+        # Should NOT be truncated anymore
+        assert len(body['output']) >= 100000  # Full 100KB should be present
         
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '5000'  # Lower token limit
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     def test_token_limit_handling(self, sample_alarm_event, mock_lambda_context):
-        """Test handling when token limits are reached."""
+        """Test handling when model limits are reached."""
         with patch('triage_handler.BedrockAgentClient') as mock_bedrock_class:
             with patch('triage_handler.boto3.client') as mock_boto3:
                 # Setup mocks
                 mock_bedrock = Mock()
-                mock_bedrock.investigate_with_tools.return_value = "Truncated analysis due to token limits"
+                mock_bedrock.investigate_with_tools.return_value = "Analysis completed"
                 mock_bedrock_class.return_value = mock_bedrock
                 
                 mock_sns = Mock()
@@ -225,11 +219,10 @@ class TestProductionReadiness:
                 # Call handler
                 result = triage_handler(sample_alarm_event, mock_lambda_context)
                 
-                # Verify token limit was passed correctly
+                # Verify BedrockAgentClient was initialized correctly (no max_tokens)
                 mock_bedrock_class.assert_called_with(
                     model_id='anthropic.claude-opus-4-1-20250805-v1:0',
-                    tool_lambda_arn='arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-                    max_tokens=5000
+                    tool_lambda_arn='arn:aws:lambda:us-east-2:123456789012:function:tool-lambda'
                 )
                 
                 assert result['statusCode'] == 200

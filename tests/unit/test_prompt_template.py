@@ -10,17 +10,16 @@ from prompt_template import PromptTemplate
 
 class TestPromptTemplate:
     
-    def test_generate_investigation_prompt_basic(self, sample_alarm_event):
-        """Test basic investigation prompt generation."""
+    def test_generate_investigation_prompt(self, sample_alarm_event):
+        """Test investigation prompt generation."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "basic"
+            sample_alarm_event
         )
         
         # Check basic structure
         assert "CloudWatch Alarm has triggered" in prompt
-        assert "quick investigation" in prompt or "basic investigation" in prompt
-        assert "aws_investigator tool" in prompt
+        assert "comprehensive" in prompt.lower()
+        assert "python_executor" in prompt
         
         # Check alarm event is included
         assert "test-lambda-errors" in prompt
@@ -31,70 +30,24 @@ class TestPromptTemplate:
         assert "INVESTIGATION DETAILS" in prompt
         assert "IMMEDIATE ACTIONS" in prompt
     
-    def test_generate_investigation_prompt_detailed(self, sample_alarm_event):
-        """Test detailed investigation prompt generation."""
-        prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "detailed"
-        )
-        
-        # Check depth-specific content
-        assert "thorough investigation" in prompt
-        assert "root cause analysis" in prompt
-        assert "prevention recommendations" in prompt
-        
-        # Check all required sections
-        assert "ROOT CAUSE ANALYSIS" in prompt
-        assert "IMPACT ASSESSMENT" in prompt
-        assert "PREVENTION MEASURES" in prompt
-    
-    def test_generate_investigation_prompt_comprehensive(self, sample_alarm_event):
-        """Test comprehensive investigation prompt generation."""
-        prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
-        )
-        
-        # Check comprehensive depth content
-        assert "exhaustive investigation" in prompt
-        assert "historical patterns" in prompt
-        assert "cascading impacts" in prompt
-        assert "long-term improvements" in prompt
-        
-        # Check monitoring section
-        assert "MONITORING RECOMMENDATIONS" in prompt
-        assert "ADDITIONAL NOTES" in prompt
-    
-    def test_generate_investigation_prompt_unknown_depth(self, sample_alarm_event):
-        """Test that unknown depth defaults to comprehensive."""
-        prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "unknown_depth"
-        )
-        
-        # Should default to comprehensive
-        assert "exhaustive investigation" in prompt
-    
     def test_generate_investigation_prompt_tool_instructions(self, sample_alarm_event):
         """Test that tool usage instructions are included."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check tool instructions
-        assert "aws_investigator tool" in prompt
-        assert "type.*cli" in prompt or '"type": "cli"' in prompt
-        assert "type.*python" in prompt or '"type": "python"' in prompt
-        assert 'aws cloudwatch get-metric-statistics' in prompt or 'get-metric-statistics' in prompt
+        assert "python_executor" in prompt
+        assert "pre-imported" in prompt.lower() or "pre imported" in prompt.lower()
+        # Check for examples
+        assert "boto3.client" in prompt
         assert "boto3" in prompt
         assert "result" in prompt
     
     def test_generate_investigation_prompt_investigation_steps(self, sample_alarm_event):
         """Test that investigation steps are properly outlined."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check systematic investigation steps
@@ -115,8 +68,7 @@ class TestPromptTemplate:
     def test_generate_investigation_prompt_security_context(self, sample_alarm_event):
         """Test that security context is included."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check security limitations
@@ -134,8 +86,7 @@ class TestPromptTemplate:
             mock_datetime.now.return_value.isoformat.return_value = '2025-08-06T12:00:00+00:00'
             
             prompt = PromptTemplate.generate_investigation_prompt(
-                sample_alarm_event,
-                "comprehensive"
+                sample_alarm_event
             )
             
             assert "Current Time" in prompt
@@ -144,8 +95,7 @@ class TestPromptTemplate:
     def test_generate_investigation_prompt_json_formatting(self, sample_alarm_event):
         """Test that alarm event is properly JSON formatted."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check that JSON is properly formatted
@@ -167,8 +117,7 @@ class TestPromptTemplate:
     def test_generate_investigation_prompt_output_format(self, sample_alarm_event):
         """Test that the required output format is specified."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check all required sections
@@ -189,12 +138,11 @@ class TestPromptTemplate:
     def test_generate_investigation_prompt_specific_guidance(self, sample_alarm_event):
         """Test that specific guidance and best practices are included."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         # Check specific guidance
-        assert "Use the tool extensively" in prompt
+        assert "python_executor tool extensively" in prompt
         assert "Don't make assumptions" in prompt
         assert "Be specific" in prompt
         assert "Be actionable" in prompt
@@ -210,8 +158,7 @@ class TestPromptTemplate:
     def test_generate_investigation_prompt_production_context(self, sample_alarm_event):
         """Test that production incident context is emphasized."""
         prompt = PromptTemplate.generate_investigation_prompt(
-            sample_alarm_event,
-            "comprehensive"
+            sample_alarm_event
         )
         
         assert "production incident" in prompt
@@ -256,8 +203,8 @@ class TestPromptTemplate:
         }
         
         # Both should generate valid prompts
-        lambda_prompt = PromptTemplate.generate_investigation_prompt(lambda_event, "comprehensive")
-        ec2_prompt = PromptTemplate.generate_investigation_prompt(ec2_event, "comprehensive")
+        lambda_prompt = PromptTemplate.generate_investigation_prompt(lambda_event)
+        ec2_prompt = PromptTemplate.generate_investigation_prompt(ec2_event)
         
         assert "lambda-memory-alarm" in lambda_prompt
         assert "AWS/Lambda" in lambda_prompt
@@ -267,4 +214,4 @@ class TestPromptTemplate:
         # Both should have same structure
         for prompt in [lambda_prompt, ec2_prompt]:
             assert "EXECUTIVE SUMMARY" in prompt
-            assert "aws_investigator tool" in prompt
+            assert "python_executor" in prompt

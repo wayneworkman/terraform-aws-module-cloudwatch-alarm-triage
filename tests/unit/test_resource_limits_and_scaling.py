@@ -15,16 +15,17 @@ class TestResourceLimitsAndScaling:
     """Test resource limits, scaling controls, and circuit breaker patterns."""
     
     @patch('bedrock_client.boto3.client')
-    def test_bedrock_quota_exhaustion_handling(self, mock_boto3_client):
+    @patch('bedrock_client.time.sleep')
+    def test_bedrock_quota_exhaustion_handling(self, mock_sleep, mock_boto3_client):
         """Test handling of Bedrock quota exhaustion scenarios."""
         mock_bedrock_client = Mock()
         mock_boto3_client.return_value = mock_bedrock_client
         
         # Mock quota exceeded error
         quota_error = Exception("ServiceQuotaExceededException: You have exceeded the maximum number of requests")
-        mock_bedrock_client.invoke_model.side_effect = quota_error
+        mock_bedrock_client.converse.side_effect = quota_error
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         
         # Should handle quota exhaustion gracefully
         result = client.investigate_with_tools("Test investigation")
@@ -33,8 +34,9 @@ class TestResourceLimitsAndScaling:
         assert 'Investigation Error' in result or 'Investigation completed but no analysis was generated' in result
         assert len(result) > 100  # Should include meaningful fallback
     
-    @patch('bedrock_client.boto3.client') 
-    def test_circuit_breaker_pattern_implementation(self, mock_boto3_client):
+    @patch('bedrock_client.boto3.client')
+    @patch('bedrock_client.time.sleep')
+    def test_circuit_breaker_pattern_implementation(self, mock_sleep, mock_boto3_client):
         """Test circuit breaker pattern for repeated failures."""
         mock_bedrock_client = Mock()
         mock_boto3_client.return_value = mock_bedrock_client
@@ -68,9 +70,9 @@ class TestResourceLimitsAndScaling:
             
             raise Exception("Bedrock service error")
         
-        mock_bedrock_client.invoke_model.side_effect = circuit_breaker_invoke
+        mock_bedrock_client.converse.side_effect = circuit_breaker_invoke
         
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         
         # Make multiple failed requests to trigger circuit breaker
         results = []
@@ -147,9 +149,7 @@ class TestResourceLimitsAndScaling:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'test-model',
         'TOOL_LAMBDA_ARN': 'test-arn',
-        'SNS_TOPIC_ARN': 'test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'test-topic'
     })
     def test_lambda_memory_and_timeout_under_load(self, sample_alarm_event, mock_lambda_context):
         """Test Lambda behavior under memory and timeout pressure."""
@@ -323,17 +323,22 @@ class TestResourceLimitsAndScaling:
                 assert degraded_config['mode'] in ['queued_processing', 'basic_investigation', 'normal_operation']
     
     @patch('bedrock_client.boto3.client')
-    def test_bedrock_token_limit_adaptive_scaling(self, mock_boto3_client):
+    @patch('bedrock_client.time.sleep')
+    def test_bedrock_token_limit_adaptive_scaling(self, mock_sleep, mock_boto3_client):
         """Test adaptive scaling of Bedrock token limits based on load."""
         mock_bedrock_client = Mock()
         mock_boto3_client.return_value = mock_bedrock_client
         
         # Mock successful response
-        mock_bedrock_client.invoke_model.return_value = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [{'type': 'text', 'text': 'Adaptive analysis'}]
-            }).encode())
-        }
+        mock_bedrock_client.converse.return_value = {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Adaptive analysis'
+                        }]
+                    }
+                }
+            }
         
         # Test adaptive token limit scaling
         load_scenarios = [
@@ -359,15 +364,12 @@ class TestResourceLimitsAndScaling:
             adaptive_tokens = calculate_adaptive_token_limit(scenario['concurrent_alarms'])
             assert adaptive_tokens == scenario['expected_tokens']
             
-            # Create client with adaptive token limit
-            client = BedrockAgentClient('test-model', 'test-arn', adaptive_tokens)
+            # Create client (no longer has token limit)
+            client = BedrockAgentClient('test-model', 'test-arn')
             result = client.investigate_with_tools("Load test investigation")
             
-            # Should complete with adaptive tokens
+            # Should complete with analysis
             assert 'Adaptive analysis' in result
-            
-            # Verify token limit was set correctly
-            assert client.max_tokens == scenario['expected_tokens']
     
     def test_burst_capacity_handling(self):
         """Test handling of burst capacity scenarios."""

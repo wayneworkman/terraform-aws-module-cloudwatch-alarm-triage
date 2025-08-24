@@ -38,9 +38,7 @@ class TestDataValidation:
         with patch.dict(os.environ, {
             'BEDROCK_MODEL_ID': 'test-model',
             'TOOL_LAMBDA_ARN': 'test-arn', 
-            'SNS_TOPIC_ARN': 'test-topic',
-            'INVESTIGATION_DEPTH': 'basic',
-            'MAX_TOKENS': '1000'
+            'SNS_TOPIC_ARN': 'test-topic'
         }):
             for i, event in enumerate(malformed_events):
                 if isinstance(event, str):
@@ -127,7 +125,7 @@ class TestDataValidation:
             'accountId': '987654321098'
         }
         
-        prompt = PromptTemplate.generate_investigation_prompt(complex_event, 'comprehensive')
+        prompt = PromptTemplate.generate_investigation_prompt(complex_event)
         
         # Should generate valid prompt without errors
         assert isinstance(prompt, str)
@@ -151,7 +149,7 @@ class TestDataValidation:
             'region': 'eu-central-1'
         }
         
-        prompt = PromptTemplate.generate_investigation_prompt(unicode_event, 'basic')
+        prompt = PromptTemplate.generate_investigation_prompt(unicode_event)
         
         # Should handle unicode without errors
         assert isinstance(prompt, str)
@@ -160,8 +158,8 @@ class TestDataValidation:
         assert 'test-alarm-with-' in prompt
         assert 'eu-central-1' in prompt
     
-    def test_prompt_template_boundary_investigation_depths(self):
-        """Test prompt template with boundary investigation depths."""
+    def test_prompt_template_generation(self):
+        """Test prompt template generation."""
         
         simple_event = {
             'alarmData': {
@@ -170,37 +168,20 @@ class TestDataValidation:
             }
         }
         
-        # Test all valid depths
-        depths = ['basic', 'detailed', 'comprehensive']
+        # Test prompt generation
+        prompt = PromptTemplate.generate_investigation_prompt(simple_event)
         
-        for depth in depths:
-            prompt = PromptTemplate.generate_investigation_prompt(simple_event, depth)
-            
-            assert isinstance(prompt, str)
-            assert len(prompt) > 500  # Should generate substantial content
-            assert 'test-alarm' in prompt
-            
-            # Verify depth-specific content
-            if depth == 'basic':
-                assert 'quick' in prompt.lower()
-            elif depth == 'detailed':  
-                assert 'thorough' in prompt.lower()
-            elif depth == 'comprehensive':
-                assert 'exhaustive' in prompt.lower()
+        assert isinstance(prompt, str)
+        assert len(prompt) > 500  # Should generate substantial content
+        assert 'test-alarm' in prompt
         
-        # Test invalid depth (should default to comprehensive)
-        invalid_prompt = PromptTemplate.generate_investigation_prompt(simple_event, 'invalid_depth')
-        comprehensive_prompt = PromptTemplate.generate_investigation_prompt(simple_event, 'comprehensive')
-        
-        # Should default to comprehensive behavior
-        assert 'exhaustive' in invalid_prompt.lower()
+        # Should always be comprehensive now
+        assert 'comprehensive' in prompt.lower()
     
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'test-model',
         'TOOL_LAMBDA_ARN': 'test-arn',
-        'SNS_TOPIC_ARN': 'test-topic', 
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '50'  # Very low token limit
+        'SNS_TOPIC_ARN': 'test-topic'
     })
     def test_triage_handler_with_token_constraints(self, sample_alarm_event, mock_lambda_context):
         """Test triage handler behavior with very low token limits."""
@@ -220,7 +201,6 @@ class TestDataValidation:
                 mock_bedrock.assert_called_with(
                     model_id='test-model',
                     tool_lambda_arn='test-arn',
-                    max_tokens=50
                 )
     
     def test_triage_handler_missing_environment_variables(self, sample_alarm_event, mock_lambda_context):

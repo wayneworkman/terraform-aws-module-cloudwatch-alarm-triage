@@ -71,7 +71,8 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
         assert 'total items: 100000' in body['output']
     
     @patch('bedrock_client.boto3.client')
-    def test_bedrock_client_with_many_rapid_tool_calls(self, mock_boto3_client):
+    @patch('bedrock_client.time.sleep')
+    def test_bedrock_client_with_many_rapid_tool_calls(self, mock_sleep, mock_boto3_client):
         """Test Bedrock client handling many rapid tool calls efficiently."""
         mock_bedrock_client = Mock()
         mock_lambda_client = Mock()
@@ -85,31 +86,27 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
         bedrock_responses = []
         for i in range(10):
             bedrock_responses.append({
-                'body': Mock(read=lambda i=i: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': f'tool-{i}',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': f'aws ec2 describe-instances --max-items {i+1}'}
-                        }
-                    ]
-                }).encode())
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': f'TOOL: python_executor\n```python\nec2 = boto3.client("ec2"); result = "instances-{i+1}"\n```'
+                        }]
+                    }
+                }
             })
         
         # Final response
         bedrock_responses.append({
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Rapid investigation completed using 10 quick tool calls.'
+            'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Rapid investigation completed using 10 quick tool calls.'
+                        }]
                     }
-                ]
-            }).encode())
-        })
+                }
+            })
         
-        mock_bedrock_client.invoke_model.side_effect = bedrock_responses
+        mock_bedrock_client.converse.side_effect = bedrock_responses
         
         # Mock fast Lambda responses
         mock_lambda_client.invoke.return_value = {
@@ -121,7 +118,7 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
         }
         
         start_time = time.time()
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Rapid investigation")
         end_time = time.time()
         
@@ -146,8 +143,6 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
                 'BEDROCK_MODEL_ID': 'test-model',
                 'TOOL_LAMBDA_ARN': 'test-arn',
                 'SNS_TOPIC_ARN': 'test-topic',
-                'INVESTIGATION_DEPTH': 'comprehensive',
-                'MAX_TOKENS': '20000',
                 'DYNAMODB_TABLE': 'test-table',
                 'INVESTIGATION_WINDOW_HOURS': '1'
             }):
@@ -194,7 +189,6 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
     def test_tool_lambda_command_timeout_handling(self, mock_lambda_context):
         """Test tool Lambda handling commands that approach timeout limits."""
         event = {
-            'type': 'python',
             'command': '''
 import time
 # Simulate long-running but legitimate operation
@@ -215,7 +209,7 @@ result = f"Completed processing {len(result_data)} items"
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert body['success'] is True
-        assert 'Completed processing 50 items' in body['output']
+        assert 'Completed processing 50 items' in body['result'] or 'Completed processing 50 items' in body['output']
     
     @patch('bedrock_client.boto3.client')
     def test_bedrock_client_token_usage_efficiency(self, mock_boto3_client):
@@ -229,25 +223,24 @@ result = f"Completed processing {len(result_data)} items"
         }.get(service_name, Mock())
         
         # Create client with low token limit to test efficiency
-        client = BedrockAgentClient('test-model', 'test-arn', 100)  # Very low token limit
+        client = BedrockAgentClient('test-model', 'test-arn')  # Very low token limit
         
         # Mock response that should fit in token limit
-        mock_bedrock_client.invoke_model.return_value = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Brief analysis within token limits.'
+        mock_bedrock_client.converse.return_value = {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Brief analysis within token limits.'
+                        }]
                     }
-                ]
-            }).encode())
-        }
+                }
+            }
         
         result = client.investigate_with_tools("Brief investigation prompt")
         
         assert 'Brief analysis within token limits' in result
         
-        # Verify token limit was passed correctly
-        call_args = mock_bedrock_client.invoke_model.call_args
-        body_data = json.loads(call_args[1]['body'])
-        assert body_data['max_tokens'] == 100
+        # Verify that inferenceConfig is passed (no maxTokens anymore)
+        call_args = mock_bedrock_client.converse.call_args
+        inference_config = call_args[1]['inferenceConfig']
+        assert 'temperature' in inference_config  # Only temperature is set now

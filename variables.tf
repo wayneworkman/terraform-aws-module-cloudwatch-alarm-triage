@@ -4,9 +4,9 @@ variable "sns_topic_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock Claude Opus 4.1 model identifier"
+  description = "Bedrock model identifier (defaults to Nova Premier for cost effectiveness)"
   type        = string
-  default     = "anthropic.claude-opus-4-1-20250805-v1:0"
+  default     = "us.amazon.nova-premier-v1:0"
 }
 
 variable "resource_prefix" {
@@ -22,15 +22,15 @@ variable "resource_suffix" {
 }
 
 variable "lambda_memory_size" {
-  description = "Memory allocation for orchestrator Lambda"
+  description = "Memory allocation for orchestrator Lambda in MB"
   type        = number
-  default     = 1024
+  default     = 512
 }
 
 variable "tool_lambda_memory_size" {
-  description = "Memory allocation for tool Lambda"
+  description = "Memory allocation for tool Lambda in MB"
   type        = number
-  default     = 2048
+  default     = 512
 }
 
 variable "lambda_timeout" {
@@ -42,36 +42,13 @@ variable "lambda_timeout" {
 variable "tool_lambda_timeout" {
   description = "Tool Lambda timeout in seconds"
   type        = number
-  default     = 60
+  default     = 120  # 2 minutes
 }
 
 variable "tool_lambda_reserved_concurrency" {
   description = "Reserved concurrent executions for tool Lambda (-1 for no limit)"
   type        = number
   default     = -1
-}
-
-variable "investigation_depth" {
-  description = "Depth of investigation (basic, detailed, comprehensive)"
-  type        = string
-  default     = "comprehensive"
-  
-  validation {
-    condition     = contains(["basic", "detailed", "comprehensive"], var.investigation_depth)
-    error_message = "Investigation depth must be one of: basic, detailed, comprehensive"
-  }
-}
-
-variable "enable_cost_controls" {
-  description = "Enable cost control features"
-  type        = bool
-  default     = true
-}
-
-variable "max_tokens_per_investigation" {
-  description = "Maximum tokens for Claude response"
-  type        = number
-  default     = 100000  # Maximum for Claude Opus 4.1 to ensure complete analysis
 }
 
 variable "investigation_window_hours" {
@@ -89,4 +66,24 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "reports_bucket_logging" {
+  description = "Optional S3 access logging configuration for the reports bucket"
+  type = object({
+    target_bucket = string
+    target_prefix = string
+  })
+  default = null
+}
+
+variable "reports_bucket_lifecycle_days" {
+  description = "Number of days after which to delete objects (both current and non-current versions). If null, no lifecycle policy is created."
+  type        = number
+  default     = null
+  
+  validation {
+    condition     = var.reports_bucket_lifecycle_days == null || var.reports_bucket_lifecycle_days > 0
+    error_message = "Lifecycle days must be null or a positive number"
+  }
 }

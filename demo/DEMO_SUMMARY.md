@@ -41,11 +41,11 @@ CloudWatch Alarm (lambda-errors)
     ↓ (triggers on first error)
 Triage Orchestrator Lambda
     ↓
-Claude Opus 4.1 (agent mode)
+AI Model (Nova Premier or Claude)
     ↓ (uses tool Lambda multiple times)
 Tool Lambda (executes investigation commands)
-    ↓ (returns findings to Claude)
-Claude Analysis & Root Cause
+    ↓ (returns findings to AI model)
+AI Analysis & Root Cause
     ↓
 SNS Email Notification
 ```
@@ -55,13 +55,13 @@ SNS Email Notification
 1. **T+0**: Demo deployment complete, EventBridge starts triggering Lambda
 2. **T+1 minute**: First Lambda failure generates error metric
 3. **T+1 minute**: CloudWatch alarm enters ALARM state, invokes triage Lambda
-4. **T+1-2 minutes**: Triage Lambda invokes Claude with alarm event
-5. **T+2-3 minutes**: Claude investigates using tool Lambda:
+4. **T+1-2 minutes**: Triage Lambda invokes AI model with alarm event
+5. **T+2-3 minutes**: AI model investigates using tool Lambda:
    - Checks CloudWatch Logs for error patterns
    - Retrieves Lambda configuration and IAM role
    - Analyzes attached IAM policies
    - Checks CloudTrail for permission denials
-6. **T+3-4 minutes**: Claude synthesizes findings and provides detailed analysis
+6. **T+3-4 minutes**: AI model synthesizes findings and provides detailed analysis
 7. **T+4-5 minutes**: Investigation results sent via SNS email
 
 ## Expected Email Content
@@ -72,7 +72,7 @@ The investigation email will include:
 "Lambda function is experiencing 100% error rate due to missing EC2 permissions. Immediate action required: Add ec2:DescribeInstances permission to Lambda role."
 
 ### Investigation Details
-- Commands executed by Claude via tool Lambda
+- Commands executed by AI model via tool Lambda
 - Log excerpts showing AccessDeniedException
 - IAM role configuration analysis
 - CloudTrail events for permission denials
@@ -149,7 +149,7 @@ The demo validates:
 - ✅ Module deploys successfully in us-east-2
 - ✅ Triage Lambda can be invoked by CloudWatch Alarms
 - ✅ Tool Lambda can be invoked by orchestrator Lambda
-- ✅ Claude Opus 4.1 agent mode works with tool access
+- ✅ AI model (Nova Premier/Claude) works with tool access
 - ✅ Investigation commands execute successfully
 - ✅ SNS notifications are properly formatted
 - ✅ All IAM permissions are correctly configured
@@ -161,7 +161,7 @@ The demo validates:
 
 **Daily costs while demo runs:**
 - Lambda executions: ~$0.01 (failing Lambda + triage invocations)
-- Bedrock API: ~$0.50-2.00 per investigation (varies by depth)
+- Bedrock API: ~$0.10-2.00 per investigation (Nova Premier is more cost-effective)
 - CloudWatch: ~$0.01 (logs, metrics, alarms)
 - SNS: ~$0.01 (email notifications)
 

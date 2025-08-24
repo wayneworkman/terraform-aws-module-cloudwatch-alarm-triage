@@ -14,9 +14,7 @@ class TestTriageHandler:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     def test_handler_alarm_state(self, sample_alarm_event, mock_lambda_context):
         """Test handler processes ALARM state correctly."""
@@ -50,9 +48,7 @@ class TestTriageHandler:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     def test_handler_ok_state(self, sample_alarm_event, mock_lambda_context):
         """Test handler skips OK state."""
@@ -73,9 +69,7 @@ class TestTriageHandler:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     @patch('boto3.client')
     @patch('triage_handler.BedrockAgentClient')
@@ -123,9 +117,7 @@ class TestTriageHandler:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'basic',
-        'MAX_TOKENS': '10000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     @patch('boto3.client')
     @patch('triage_handler.BedrockAgentClient')
@@ -142,11 +134,10 @@ class TestTriageHandler:
         # Call handler
         result = handler(sample_alarm_event, mock_lambda_context)
         
-        # Verify correct depth was passed
+        # Verify correct depth was passed (no max_tokens anymore)
         mock_bedrock_class.assert_called_with(
             model_id='anthropic.claude-opus-4-1-20250805-v1:0',
-            tool_lambda_arn='arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-            max_tokens=10000
+            tool_lambda_arn='arn:aws:lambda:us-east-2:123456789012:function:tool-lambda'
         )
     
     def test_handler_direct_alarm_format(self, mock_lambda_context):
@@ -162,9 +153,7 @@ class TestTriageHandler:
         with patch.dict(os.environ, {
             'BEDROCK_MODEL_ID': 'test-model',
             'TOOL_LAMBDA_ARN': 'test-arn',
-            'SNS_TOPIC_ARN': 'test-topic',
-            'INVESTIGATION_DEPTH': 'basic',
-            'MAX_TOKENS': '1000'
+            'SNS_TOPIC_ARN': 'test-topic'
         }):
             with patch('triage_handler.BedrockAgentClient') as mock_bedrock:
                 with patch('boto3.client') as mock_boto3:
@@ -177,9 +166,7 @@ class TestTriageHandler:
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-2:123456789012:function:tool-lambda',
-        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic',
-        'INVESTIGATION_DEPTH': 'comprehensive',
-        'MAX_TOKENS': '20000'
+        'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-2:123456789012:test-topic'
     })
     @patch('boto3.client')
     @patch('triage_handler.BedrockAgentClient')

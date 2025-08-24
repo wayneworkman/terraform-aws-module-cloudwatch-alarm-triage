@@ -50,14 +50,13 @@ class TestMultiRegionMultiAccount:
         mock_boto3_client.return_value = mock_bedrock_client
         
         # Simulate region not supported error
-        mock_bedrock_client.invoke_model.side_effect = Exception(
+        mock_bedrock_client.converse.side_effect = Exception(
             "The provided model identifier is invalid or not supported in this region"
         )
         
         client = BedrockAgentClient(
             'anthropic.claude-opus-4-1-20250805-v1:0', 
-            'test-arn', 
-            1000
+            'test-arn'
         )
         
         # Should handle gracefully with fallback analysis
@@ -123,8 +122,6 @@ class TestMultiRegionMultiAccount:
         'BEDROCK_MODEL_ID': 'test-model',
         'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:987654321098:function:cross-account-tool',
         'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:987654321098:central-notifications',
-        'INVESTIGATION_DEPTH': 'basic',
-        'MAX_TOKENS': '1000',
         'DYNAMODB_TABLE': 'test-table',
         'INVESTIGATION_WINDOW_HOURS': '1'
     })
@@ -293,28 +290,24 @@ class TestMultiRegionMultiAccount:
                 'region': 'us-east-1',
                 'bedrock_model_id': 'anthropic.claude-opus-4-1-20250805-v1:0',
                 'tool_lambda_timeout': 300,
-                'investigation_depth': 'comprehensive',
                 'expected_valid': True
             },
             {
                 'region': 'us-west-1',  # Claude Opus not available
                 'bedrock_model_id': 'anthropic.claude-opus-4-1-20250805-v1:0', 
                 'tool_lambda_timeout': 300,
-                'investigation_depth': 'comprehensive',
                 'expected_valid': False
             },
             {
                 'region': 'eu-west-1',
                 'bedrock_model_id': 'anthropic.claude-opus-4-1-20250805-v1:0',
                 'tool_lambda_timeout': 1000,  # Too long (exceeds 900s max)
-                'investigation_depth': 'comprehensive',
                 'expected_valid': False
             },
             {
                 'region': 'ap-southeast-2',
                 'bedrock_model_id': 'anthropic.claude-haiku-3-20240307-v1:0',  # Different model
                 'tool_lambda_timeout': 300,
-                'investigation_depth': 'basic',
                 'expected_valid': True  # Haiku available in more regions
             }
         ]
@@ -332,10 +325,6 @@ class TestMultiRegionMultiAccount:
             # Check Lambda timeout limits (AWS Lambda max is 15 minutes = 900s)
             if config['tool_lambda_timeout'] > 900:  # 15 minutes max
                 errors.append(f"Lambda timeout {config['tool_lambda_timeout']}s exceeds maximum")
-            
-            # Check investigation depth compatibility
-            if config['investigation_depth'] == 'comprehensive' and 'haiku' in config['bedrock_model_id']:
-                errors.append("Haiku model not recommended for comprehensive investigations")
             
             return {
                 'valid': len(errors) == 0,

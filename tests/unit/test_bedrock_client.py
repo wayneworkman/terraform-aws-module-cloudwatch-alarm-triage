@@ -17,13 +17,11 @@ class TestBedrockAgentClient:
             
             client = BedrockAgentClient(
                 model_id='test-model',
-                tool_lambda_arn='test-arn',
-                max_tokens=1000
+                tool_lambda_arn='test-arn'
             )
             
             assert client.model_id == 'test-model'
             assert client.tool_lambda_arn == 'test-arn'
-            assert client.max_tokens == 1000
             
             # Verify boto3 clients were created
             assert mock_boto3.call_count == 2
@@ -35,40 +33,37 @@ class TestBedrockAgentClient:
             assert call_args[0][0] == 'lambda'
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_with_tools_success(self, mock_boto3):
-        """Test successful investigation with tool calls."""
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_with_tools_success(self, mock_sleep, mock_boto3):
+        """Test successful investigation with tool calls using Converse API."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock Bedrock response with tool use
-        bedrock_response_1 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-1',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'cli', 'command': 'aws ec2 describe-instances'}
-                    }
-                ]
-            }).encode())
+        # Mock Converse API response with tool use
+        converse_response_1 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'TOOL: python_executor\n```python\nec2 = boto3.client("ec2")\nresult = ec2.describe_instances()\nprint(result)\n```'
+                    }]
+                }
+            }
         }
         
-        # Mock Bedrock response with final text
-        bedrock_response_2 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
+        # Mock Converse API response with final text
+        converse_response_2 = {
+            'output': {
+                'message': {
+                    'content': [{
                         'text': 'Investigation complete. Found permission issues.'
-                    }
-                ]
-            }).encode())
+                    }]
+                }
+            }
         }
         
-        mock_bedrock.invoke_model.side_effect = [bedrock_response_1, bedrock_response_2]
+        mock_bedrock.converse.side_effect = [converse_response_1, converse_response_2]
         
         # Mock Lambda tool response
         mock_lambda.invoke.return_value = {
@@ -83,119 +78,146 @@ class TestBedrockAgentClient:
         }
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
         assert result == 'Investigation complete. Found permission issues.'
-        assert mock_bedrock.invoke_model.call_count == 2
+        assert mock_bedrock.converse.call_count == 2
         assert mock_lambda.invoke.call_count == 1
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_with_multiple_tools(self, mock_boto3):
-        """Test investigation with multiple tool calls."""
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_with_multiple_tools(self, mock_sleep, mock_boto3):
+        """Test investigation with multiple tool calls using Converse API."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock Bedrock responses
-        bedrock_response_1 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-1',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'cli', 'command': 'aws logs filter-log-events'}
-                    },
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-2',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'python', 'command': 'import boto3\nresult = "test"'}
+        # Mock multiple Converse API responses with tool uses
+        converse_responses = [
+            {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\nec2 = boto3.client("ec2")\nresponse = ec2.describe_instances()\nprint(response)\n```'
+                        }]
                     }
-                ]
-            }).encode())
-        }
-        
-        bedrock_response_2 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Analysis complete'
+                }
+            },
+            {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\ncw = boto3.client("cloudwatch")\nalarms = cw.describe_alarms()\nprint(alarms)\n```'
+                        }]
                     }
-                ]
-            }).encode())
-        }
+                }
+            },
+            {
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'Based on the investigation, the issue is with the EC2 instance state.'
+                        }]
+                    }
+                }
+            }
+        ]
         
-        mock_bedrock.invoke_model.side_effect = [bedrock_response_1, bedrock_response_2]
+        mock_bedrock.converse.side_effect = converse_responses
         
-        # Mock Lambda responses
-        mock_lambda.invoke.return_value = {
-            'StatusCode': 200,
-            'Payload': Mock(read=lambda: json.dumps({
-                'statusCode': 200,
-                'body': json.dumps({'success': True, 'output': 'Tool output'})
-            }).encode())
-        }
+        # Mock Lambda tool responses
+        mock_lambda.invoke.side_effect = [
+            {
+                'StatusCode': 200,
+                'Payload': Mock(read=lambda: json.dumps({
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'success': True,
+                        'output': 'EC2 instances: i-123456'
+                    })
+                }).encode())
+            },
+            {
+                'StatusCode': 200,
+                'Payload': Mock(read=lambda: json.dumps({
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'success': True,
+                        'output': 'Alarms found: CPUAlarm'
+                    })
+                }).encode())
+            }
+        ]
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
-        assert result == 'Analysis complete'
-        assert mock_lambda.invoke.call_count == 2  # Two tool calls
+        assert result == 'Based on the investigation, the issue is with the EC2 instance state.'
+        assert mock_bedrock.converse.call_count == 3
+        assert mock_lambda.invoke.call_count == 2
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_tool_error_handling(self, mock_boto3):
-        """Test handling of tool execution errors."""
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_tool_error_handling(self, mock_sleep, mock_boto3):
+        """Test error handling when tool execution fails."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock Bedrock response requesting tool
-        bedrock_response_1 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-1',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'cli', 'command': 'aws s3 ls'}
-                    }
-                ]
-            }).encode())
+        # Mock Converse API response with tool use
+        converse_response_1 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'TOOL: python_executor\n```python\nec2 = boto3.client("ec2")\nresult = ec2.describe_instances()\n```'
+                    }]
+                }
+            }
         }
         
-        bedrock_response_2 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Tool failed but continuing analysis'
-                    }
-                ]
-            }).encode())
+        # Mock Converse API response after error
+        converse_response_2 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'Investigation failed due to tool execution error.'
+                    }]
+                }
+            }
         }
         
-        mock_bedrock.invoke_model.side_effect = [bedrock_response_1, bedrock_response_2]
+        mock_bedrock.converse.side_effect = [converse_response_1, converse_response_2]
         
-        # Mock Lambda error
-        mock_lambda.invoke.side_effect = Exception("Lambda invocation failed")
+        # Mock Lambda tool error
+        mock_lambda.invoke.return_value = {
+            'StatusCode': 500,
+            'Payload': Mock(read=lambda: json.dumps({
+                'statusCode': 500,
+                'body': json.dumps({
+                    'success': False,
+                    'output': 'Internal server error'
+                })
+            }).encode())
+        }
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Should handle error and continue
-        assert 'Tool failed but continuing analysis' in result
+        # Assertions
+        assert 'Investigation failed' in result
+        assert mock_bedrock.converse.call_count == 2
+        assert mock_lambda.invoke.call_count == 1
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_bedrock_error(self, mock_boto3):
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_bedrock_error(self, mock_sleep, mock_boto3):
         """Test handling of Bedrock API errors."""
         # Setup mocks
         mock_bedrock = Mock()
@@ -203,140 +225,128 @@ class TestBedrockAgentClient:
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
         # Mock Bedrock error
-        mock_bedrock.invoke_model.side_effect = Exception("Bedrock API error")
+        mock_bedrock.converse.side_effect = Exception("Bedrock service error")
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Should return error message
+        # Assertions
         assert 'Investigation Error' in result
-        assert 'Bedrock API error' in result
+        assert 'Bedrock service error' in result
+        assert mock_bedrock.converse.call_count == 1
     
     @patch('bedrock_client.boto3.client')
-    @patch('time.sleep')  # Mock sleep to speed up test
+    @patch('bedrock_client.time.sleep')
     def test_investigate_max_iterations(self, mock_sleep, mock_boto3):
-        """Test that tool calls are limited to prevent infinite loops."""
+        """Test that investigation stops at max iterations."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock Bedrock to always request tools (simulate infinite loop)
-        # But only create 5 responses for testing speed
-        bedrock_responses = []
-        for i in range(5):
-            bedrock_responses.append({
-                'body': Mock(read=lambda: json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': f'tool-{i}',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws ec2 describe-instances'}
-                        }
-                    ]
-                }).encode())
-            })
+        # Always return tool use (never ending investigation)
+        converse_response = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'TOOL: python_executor\n```python\nprint("iteration")\n```'
+                    }]
+                }
+            }
+        }
         
-        # After 5 tool calls, return a final text response
-        bedrock_responses.append({
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Stopped after 5 iterations for testing'
-                    }
-                ]
-            }).encode())
-        })
+        mock_bedrock.converse.return_value = converse_response
         
-        mock_bedrock.invoke_model.side_effect = bedrock_responses
-        
-        # Mock Lambda response
+        # Mock Lambda tool response
         mock_lambda.invoke.return_value = {
             'StatusCode': 200,
             'Payload': Mock(read=lambda: json.dumps({
                 'statusCode': 200,
-                'body': json.dumps({'success': True, 'output': 'Output'})
+                'body': json.dumps({
+                    'success': True,
+                    'output': 'Iteration output'
+                })
             }).encode())
         }
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Should have made 6 bedrock calls (5 tool requests + 1 final response)
-        assert mock_bedrock.invoke_model.call_count == 6
-        # Should have made 5 lambda calls (one for each tool request)
-        assert mock_lambda.invoke.call_count == 5
-        # Result should contain the final text
-        assert 'Stopped after 5 iterations' in result
+        # Should reach max_iterations (100)
+        assert mock_bedrock.converse.call_count == 100
+        assert mock_lambda.invoke.call_count == 100
+        assert result == "Investigation completed but no analysis was generated."
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_unknown_tool(self, mock_boto3):
-        """Test handling of unknown tool requests."""
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_unknown_tool(self, mock_sleep, mock_boto3):
+        """Test handling of unknown tool in response."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock Bedrock response with unknown tool
-        bedrock_response_1 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': 'tool-1',
-                        'name': 'unknown_tool',
-                        'input': {'param': 'value'}
-                    }
-                ]
-            }).encode())
+        # Mock Converse API response with invalid tool format
+        converse_response_1 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'TOOL: python_executor\nNo code block here'
+                    }]
+                }
+            }
         }
         
-        bedrock_response_2 = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': 'Handled unknown tool'
-                    }
-                ]
-            }).encode())
+        # Mock Converse API response after warning
+        converse_response_2 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': 'Investigation complete without tool execution.'
+                    }]
+                }
+            }
         }
         
-        mock_bedrock.invoke_model.side_effect = [bedrock_response_1, bedrock_response_2]
+        mock_bedrock.converse.side_effect = [converse_response_1, converse_response_2]
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Should handle unknown tool gracefully
-        assert result == 'Handled unknown tool'
-        # Lambda should not be invoked for unknown tool
-        mock_lambda.invoke.assert_not_called()
+        # Assertions
+        assert result == 'Investigation complete without tool execution.'
+        assert mock_bedrock.converse.call_count == 2
+        assert mock_lambda.invoke.call_count == 0  # No tool execution
     
     @patch('bedrock_client.boto3.client')
-    def test_investigate_empty_response(self, mock_boto3):
-        """Test handling of empty Claude response."""
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_empty_response(self, mock_sleep, mock_boto3):
+        """Test handling of empty response from Bedrock."""
         # Setup mocks
         mock_bedrock = Mock()
         mock_lambda = Mock()
         mock_boto3.side_effect = [mock_bedrock, mock_lambda]
         
-        # Mock empty Bedrock response
-        bedrock_response = {
-            'body': Mock(read=lambda: json.dumps({
-                'content': []
-            }).encode())
+        # Mock empty Converse API response
+        converse_response = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': ''
+                    }]
+                }
+            }
         }
         
-        mock_bedrock.invoke_model.return_value = bedrock_response
+        mock_bedrock.converse.return_value = converse_response
         
         # Create client and run investigation
-        client = BedrockAgentClient('test-model', 'test-arn', 1000)
+        client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Should return default message
-        assert 'Investigation completed but no analysis was generated' in result
+        # Assertions
+        assert result == "Investigation completed but no analysis was generated."
+        assert mock_bedrock.converse.call_count == 1

@@ -33,51 +33,35 @@ class TestIteration2IntegrationPoints:
         client = BedrockAgentClient(
             model_id="anthropic.claude-opus-4-1-20250805-v1:0",
             tool_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:tool",
-            max_tokens=1000
         )
         
         # Mock complex Bedrock responses with multiple tool calls
         bedrock_responses = [
             # First response - Claude requests tools
             {
-                'body': Mock(read=Mock(return_value=json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-1',
-                            'name': 'aws_investigator',
-                            'input': {'type': 'cli', 'command': 'aws sts get-caller-identity'}
-                        }
-                    ]
-                }).encode()))
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\nsts = boto3.client("sts"); result = sts.get_caller_identity()\n```'
+                        }]
+                    }
+                }
             },
             # Second response - Claude requests another tool
             {
-                'body': Mock(read=Mock(return_value=json.dumps({
-                    'content': [
-                        {
-                            'type': 'tool_use',
-                            'id': 'tool-2', 
-                            'name': 'aws_investigator',
-                            'input': {'type': 'python', 'command': 'result = "analysis complete"'}
-                        }
-                    ]
-                }).encode()))
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': 'TOOL: python_executor\n```python\nresult = "analysis complete"\n```'
+                        }]
+                    }
+                }
             },
             # Final response - Claude provides analysis
-            {
-                'body': Mock(read=Mock(return_value=json.dumps({
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': 'Based on my investigation using the tools, here is my analysis...'
-                        }
-                    ]
-                }).encode()))
-            }
+            {'output': {'message': {'content': [{'text': 'Based on my investigation using the tools, here is my analysis...'}]}}}
         ]
         
-        with patch.object(client.bedrock, 'invoke_model') as mock_bedrock:
+        with patch.object(client.bedrock, 'converse') as mock_bedrock:
             mock_bedrock.side_effect = bedrock_responses
             
             # Mock tool Lambda responses
@@ -171,9 +155,7 @@ class TestIteration2IntegrationPoints:
         with patch.dict('os.environ', {
             'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
             'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:123:function:tool',
-            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic',
-            'INVESTIGATION_DEPTH': 'comprehensive',
-            'MAX_TOKENS': '20000'
+            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic'
         }):
             with patch('triage_handler.BedrockAgentClient') as mock_bedrock_client:
                 mock_investigation = mock_bedrock_client.return_value.investigate_with_tools
@@ -204,7 +186,6 @@ class TestIteration2IntegrationPoints:
         client = BedrockAgentClient(
             model_id="anthropic.claude-opus-4-1-20250805-v1:0",
             tool_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:tool",
-            max_tokens=1000
         )
         
         # Test throttling with eventual success
@@ -218,13 +199,9 @@ class TestIteration2IntegrationPoints:
             operation_name='InvokeModel'
         )
         
-        success_response = {
-            'body': Mock(read=Mock(return_value=json.dumps({
-                'content': [{'type': 'text', 'text': 'Analysis completed after retries'}]
-            }).encode()))
-        }
+        success_response = {'output': {'message': {'content': [{'text': 'Analysis completed after retries'}]}}}
         
-        with patch.object(client.bedrock, 'invoke_model') as mock_bedrock:
+        with patch.object(client.bedrock, 'converse') as mock_bedrock:
             # Test: throttling -> quota error -> success
             mock_bedrock.side_effect = [throttling_error, quota_error, success_response]
             
@@ -253,8 +230,8 @@ class TestIteration2IntegrationPoints:
         
         for env in test_environments:
             event = {
-                'type': 'cli',
-                'command': 'aws configure list'
+                # Test Python-only execution
+                'command': 'result = {"region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1")}'
             }
             
             with patch.dict('os.environ', env, clear=True):
@@ -305,38 +282,28 @@ class TestIteration2IntegrationPoints:
             }
         }
         
-        depths = ['basic', 'detailed', 'comprehensive']
+        prompt = PromptTemplate.generate_investigation_prompt(alarm_event=complex_alarm)
         
-        for depth in depths:
-            prompt = PromptTemplate.generate_investigation_prompt(
-                alarm_event=complex_alarm,
-                investigation_depth=depth
-            )
-            
-            # Should handle complex JSON serialization - the prompt includes the entire alarm event
-            # JSON encoding converts Unicode to escape sequences
-            
-            # Check for Unicode-escaped alarm name (JSON encodes special chars)
-            assert '\\u00e9\\u00e1\\u00f1' in prompt  # éáñ as Unicode escapes
-            assert 'Threshold \\"crossed\\" & limit exceeded' in prompt  # Escaped quotes
-            assert '\\u6d4b\\u8bd5\\u6570\\u636e' in prompt  # 测试数据 as Unicode escapes
-            # Check that the depth instructions are included
-            if depth == 'basic':
-                assert 'quick' in prompt.lower()
-            elif depth == 'detailed':
-                assert 'thorough' in prompt.lower()  
-            elif depth == 'comprehensive':
-                assert 'exhaustive' in prompt.lower()
-            
-            # Should contain tool usage instructions
-            assert 'aws_investigator' in prompt
-            assert 'type": "cli"' in prompt
-            assert 'type": "python"' in prompt
-            
-            # Should contain the alarm event as JSON - checking that JSON serialization worked
-            assert 'alarmData' in prompt  # The key should be present
-            assert '```json' in prompt  # JSON code block should be present
-            assert '"alarmName": "complex-alarm-with-special-chars-' in prompt  # Partial name match
+        # Should handle complex JSON serialization - the prompt includes the entire alarm event
+        # JSON encoding converts Unicode to escape sequences
+        
+        # Check for Unicode-escaped alarm name (JSON encodes special chars)
+        assert '\\u00e9\\u00e1\\u00f1' in prompt  # éáñ as Unicode escapes
+        assert 'Threshold \\"crossed\\" & limit exceeded' in prompt  # Escaped quotes
+        assert '\\u6d4b\\u8bd5\\u6570\\u636e' in prompt  # 测试数据 as Unicode escapes
+        
+        # Should always be comprehensive now
+        assert 'comprehensive' in prompt.lower()
+        
+        # Should contain tool usage instructions
+        assert 'python_executor' in prompt
+        assert 'boto3' in prompt
+        assert 'python' in prompt.lower()
+        
+        # Should contain the alarm event as JSON - checking that JSON serialization worked
+        assert 'alarmData' in prompt  # The key should be present
+        assert '```json' in prompt  # JSON code block should be present
+        assert '"alarmName": "complex-alarm-with-special-chars-' in prompt  # Partial name match
     
     def test_error_propagation_and_fallback_mechanisms(self):
         """
@@ -347,9 +314,7 @@ class TestIteration2IntegrationPoints:
         with patch.dict('os.environ', {
             'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
             'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:123:function:tool',
-            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic',
-            'INVESTIGATION_DEPTH': 'comprehensive',
-            'MAX_TOKENS': '20000'
+            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic'
         }):
             alarm_event = {
                 'alarmData': {
@@ -402,35 +367,26 @@ class TestIteration2IntegrationPoints:
         client = BedrockAgentClient(
             model_id="anthropic.claude-opus-4-1-20250805-v1:0",
             tool_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:tool",
-            max_tokens=1000
         )
         
         # Test with smaller number for speed - create 10 responses to verify it processes them all
         # and stops when done (not at an artificial limit)
         responses = []
         for i in range(10):
-            tool_use_response = {
-                'content': [
-                    {
-                        'type': 'tool_use',
-                        'id': f'tool-{i}',
-                        'name': 'aws_investigator',
-                        'input': {'type': 'cli', 'command': f'aws sts get-caller-identity-{i}'}
-                    }
-                ]
-            }
             responses.append({
-                'body': Mock(read=Mock(return_value=json.dumps(tool_use_response).encode()))
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': f'TOOL: python_executor\n```python\nsts = boto3.client("sts"); result = "identity-{i}"\n```'
+                        }]
+                    }
+                }
             })
         
         # Add a final text response to complete the investigation
-        responses.append({
-            'body': Mock(read=Mock(return_value=json.dumps({
-                'content': [{'type': 'text', 'text': 'Investigation complete after 10 tool calls'}]
-            }).encode()))
-        })
+        responses.append({'output': {'message': {'content': [{'text': 'Investigation complete after 10 tool calls'}]}}})
         
-        with patch.object(client.bedrock, 'invoke_model') as mock_bedrock:
+        with patch.object(client.bedrock, 'converse') as mock_bedrock:
             mock_bedrock.side_effect = responses
             
             # Mock tool responses

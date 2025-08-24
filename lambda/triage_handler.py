@@ -3,12 +3,60 @@ import os
 import boto3
 import logging
 import time
+from datetime import datetime
 from decimal import Decimal
 from bedrock_client import BedrockAgentClient
 from prompt_template import PromptTemplate
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def save_report_to_s3(alarm_name, alarm_state, analysis, event):
+    """Save investigation report to S3 bucket."""
+    try:
+        bucket_name = os.environ.get('REPORTS_BUCKET')
+        if not bucket_name:
+            logger.warning("REPORTS_BUCKET not configured, skipping S3 save")
+            return None
+            
+        region = os.environ.get('BEDROCK_REGION', 'us-east-1')
+        s3 = boto3.client('s3', region_name=region)
+        
+        # Generate report filename with timestamp
+        timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S')
+        # Clean alarm name for filename (replace non-alphanumeric chars)
+        clean_alarm_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in alarm_name)
+        report_key = f"reports/{datetime.utcnow().strftime('%Y/%m/%d')}/{clean_alarm_name}-{timestamp}.json"
+        
+        # Create comprehensive report
+        report = {
+            'alarm_name': alarm_name,
+            'alarm_state': alarm_state,
+            'investigation_timestamp': datetime.utcnow().isoformat(),
+            'event': event,
+            'analysis': analysis,
+            'metadata': {
+                'bedrock_model': os.environ.get('BEDROCK_MODEL_ID'),
+                'region': region,
+                'account_id': event.get('accountId', 'unknown')
+            }
+        }
+        
+        # Upload to S3
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=report_key,
+            Body=json.dumps(report, indent=2),
+            ContentType='application/json',
+            ServerSideEncryption='AES256'
+        )
+        
+        logger.info(f"Report saved to S3: s3://{bucket_name}/{report_key}")
+        return f"s3://{bucket_name}/{report_key}"
+        
+    except Exception as e:
+        logger.error(f"Failed to save report to S3: {str(e)}")
+        return None
 
 def should_investigate(alarm_name, investigation_window_hours=None):
     try:
@@ -83,15 +131,13 @@ def handler(event, context):
     try:
         bedrock = BedrockAgentClient(
             model_id=os.environ['BEDROCK_MODEL_ID'],
-            tool_lambda_arn=os.environ['TOOL_LAMBDA_ARN'],
-            max_tokens=int(os.environ['MAX_TOKENS'])
+            tool_lambda_arn=os.environ['TOOL_LAMBDA_ARN']
         )
         prompt = PromptTemplate.generate_investigation_prompt(
-            alarm_event=event,
-            investigation_depth=os.environ['INVESTIGATION_DEPTH']
+            alarm_event=event
         )
         
-        logger.info("Invoking Claude for investigation...")
+        logger.info("Invoking AI model for investigation...")
         try:
             analysis = bedrock.investigate_with_tools(prompt)
             logger.info("Investigation complete, sending notification...")
@@ -101,7 +147,7 @@ def handler(event, context):
 Investigation Error - Bedrock Unavailable
 ========================================
 
-An error occurred while invoking Claude for investigation:
+An error occurred while invoking AI model for investigation:
 {str(bedrock_error)}
 
 Manual Investigation Required:
@@ -115,12 +161,16 @@ Alarm Details:
 - State: {alarm_state}
 - Region: {event.get('region', 'unknown')}
 
-This is an automated fallback message when Claude investigation fails.
+This is an automated fallback message when AI investigation fails.
 """
+        
+        # Save report to S3
+        s3_location = save_report_to_s3(alarm_name, alarm_state, analysis, event)
+        
         region = os.environ.get('BEDROCK_REGION', 'us-east-1')
         sns = boto3.client('sns', region_name=region)
         
-        message = format_notification(alarm_name, alarm_state, analysis, event)
+        message = format_notification(alarm_name, alarm_state, analysis, event, s3_location)
         
         sns.publish(
             TopicArn=os.environ['SNS_TOPIC_ARN'],
@@ -130,14 +180,19 @@ This is an automated fallback message when Claude investigation fails.
         
         logger.info("Notification sent successfully")
         
+        response_body = {
+            'alarm': alarm_name,
+            'state': alarm_state,
+            'investigation_complete': True,
+            'analysis_length': len(analysis)
+        }
+        
+        if s3_location:
+            response_body['report_location'] = s3_location
+        
         return {
             'statusCode': 200,
-            'body': json.dumps({
-                'alarm': alarm_name,
-                'state': alarm_state,
-                'investigation_complete': True,
-                'analysis_length': len(analysis)
-            })
+            'body': json.dumps(response_body)
         }
         
     except Exception as e:
@@ -174,8 +229,8 @@ Please check the Lambda logs for more information.
             })
         }
 
-def format_notification(alarm_name, alarm_state, analysis, event):
-    """Format the notification message with Claude's analysis."""
+def format_notification(alarm_name, alarm_state, analysis, event, s3_location=None):
+    """Format the notification message with AI model's analysis."""
     
     # Extract alarm details for context
     region = event.get('region', os.environ.get('AWS_DEFAULT_REGION', 'unknown'))
@@ -183,6 +238,16 @@ def format_notification(alarm_name, alarm_state, analysis, event):
     
     # Build console URL for the alarm
     console_url = f"https://console.aws.amazon.com/cloudwatch/home?region={region}#alarmsV2:alarm/{alarm_name}"
+    
+    # Add S3 report location if available
+    report_section = ""
+    if s3_location:
+        report_section = f"""
+Full Report Location:
+{s3_location}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
     
     return f"""
 CloudWatch Alarm Investigation Results
@@ -194,16 +259,16 @@ Region: {region}
 Account: {account_id}
 
 Console Link: {console_url}
-
+{report_section}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Claude's Investigation & Analysis:
+AI Investigation & Analysis:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {analysis}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-This investigation was performed automatically by Claude Opus 4.1 using AWS API calls.
+This investigation was performed automatically by AWS Bedrock using AWS API calls.
 For questions or improvements, please contact your CloudWatch Alarm Triage administrator.
 """

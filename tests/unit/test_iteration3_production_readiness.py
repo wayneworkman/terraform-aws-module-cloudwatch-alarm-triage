@@ -38,9 +38,7 @@ class TestIteration3ProductionReadiness:
         with patch.dict('os.environ', {
             'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
             'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:123:function:tool',
-            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic',
-            'INVESTIGATION_DEPTH': 'comprehensive',
-            'MAX_TOKENS': '20000'
+            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic'
         }):
             alarm_event = {
                 'alarmData': {
@@ -127,9 +125,7 @@ class TestIteration3ProductionReadiness:
         with patch.dict('os.environ', {
             'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
             'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:123:function:tool',
-            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic',
-            'INVESTIGATION_DEPTH': 'comprehensive',
-            'MAX_TOKENS': '20000'
+            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic'
         }):
             with patch('triage_handler.BedrockAgentClient') as mock_bedrock_client:
                 # Mock a memory-constrained response
@@ -164,7 +160,6 @@ class TestIteration3ProductionReadiness:
         client = BedrockAgentClient(
             model_id="anthropic.claude-opus-4-1-20250805-v1:0",
             tool_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:tool",
-            max_tokens=1000
         )
         
         # Simulate resource contention scenarios
@@ -184,13 +179,9 @@ class TestIteration3ProductionReadiness:
         ]
         
         # Test high-frequency retry scenarios
-        with patch.object(client.bedrock, 'invoke_model') as mock_bedrock:
+        with patch.object(client.bedrock, 'converse') as mock_bedrock:
             # Simulate: multiple failures followed by eventual success
-            success_response = {
-                'body': Mock(read=Mock(return_value=json.dumps({
-                    'content': [{'type': 'text', 'text': 'Analysis completed under load'}]
-                }).encode()))
-            }
+            success_response = {'output': {'message': {'content': [{'text': 'Analysis completed under load'}]}}}
             
             # Mix of different errors followed by success
             mock_bedrock.side_effect = contention_errors + [success_response]
@@ -235,10 +226,7 @@ class TestIteration3ProductionReadiness:
             'region': 'us-east-1'
         }
         
-        prompt = PromptTemplate.generate_investigation_prompt(
-            alarm_event=sensitive_alarm_event,
-            investigation_depth='comprehensive'
-        )
+        prompt = PromptTemplate.generate_investigation_prompt(alarm_event=sensitive_alarm_event)
         
         # Verify that sensitive data is included (as it should be for investigation)
         # But also verify that this is properly formatted for secure handling
@@ -315,19 +303,22 @@ class TestIteration3ProductionReadiness:
         # Create delayed responses to simulate cold start latency
         for i in range(3):
             response = {
-                'body': Mock(read=Mock(return_value=json.dumps({
-                    'content': [{'type': 'text', 'text': f'Cold start analysis {i+1}'}]
-                }).encode()))
+                'output': {
+                    'message': {
+                        'content': [{
+                            'text': f'Cold start analysis {i+1}'
+                        }]
+                    }
+                }
             }
             slow_bedrock_responses.append(response)
         
         client = BedrockAgentClient(
             model_id="anthropic.claude-opus-4-1-20250805-v1:0",
             tool_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:tool",
-            max_tokens=1000
         )
         
-        with patch.object(client.bedrock, 'invoke_model') as mock_bedrock:
+        with patch.object(client.bedrock, 'converse') as mock_bedrock:
             # Simulate slow service initialization
             def slow_invoke(*args, **kwargs):
                 time.sleep(0.1)  # Simulate cold start delay
@@ -349,53 +340,31 @@ class TestIteration3ProductionReadiness:
             # Should have made at least one call
             assert mock_bedrock.call_count >= 1
     
-    def test_tool_lambda_aws_cli_version_compatibility_and_environment_consistency(self):
+    def test_tool_lambda_python_environment_consistency(self):
         """
-        Test tool Lambda's AWS CLI compatibility and environment consistency across deployments.
+        Test tool Lambda's Python environment consistency across deployments.
         This tests infrastructure consistency that's critical for production reliability.
         """
-        # Test various AWS CLI commands that should work in the Lambda environment
+        # Test various Python operations that should work in the Lambda environment
         test_commands = [
-            {'type': 'cli', 'command': 'aws --version'},
-            {'type': 'cli', 'command': 'aws sts get-caller-identity --output json'},
-            {'type': 'cli', 'command': 'aws configure list'},
-            {'type': 'cli', 'command': 'aws ec2 describe-regions --output json'},
-            {'type': 'python', 'command': 'import boto3; result = boto3.__version__'}
+            {'command': 'result = str(boto3.__version__)'},
+            {'command': 'sts = boto3.client("sts"); result = "STS client created"'},
+            {'command': 'result = {"python_version": str(sys.version_info[:2])}'},
+            {'command': 'ec2 = boto3.client("ec2", region_name="us-east-1"); result = "EC2 client created"'},
+            {'command': 'result = {"modules": len([m for m in globals() if not m.startswith("_")])}'}
         ]
         
         for command in test_commands:
-            # Mock appropriate responses for each command type
-            if command['type'] == 'cli':
-                if '--version' in command['command']:
-                    expected_output = 'aws-cli/2.13.0 Python/3.11.4 Linux/5.4.0 exe/x86_64.amzn.2023'
-                elif 'get-caller-identity' in command['command']:
-                    expected_output = '{"UserId": "EXAMPLE", "Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/test"}'
-                elif 'describe-regions' in command['command']:
-                    expected_output = '{"Regions": [{"RegionName": "us-east-1", "Endpoint": "ec2.us-east-1.amazonaws.com"}]}'
-                else:
-                    expected_output = 'Command executed successfully'
-                    
-                mock_result = Mock()
-                mock_result.returncode = 0
-                mock_result.stdout = expected_output
-                mock_result.stderr = ""
+            with patch('boto3.client') as mock_client:
+                mock_client.return_value = Mock()
                 
-                with patch('subprocess.run', return_value=mock_result):
-                    result = tool_handler(command, {})
-                    
-                    assert result['statusCode'] == 200
-                    body = json.loads(result['body'])
-                    assert body['success'] is True
-                    assert expected_output in body['output']
-                    
-            else:  # Python command
                 result = tool_handler(command, {})
                 
                 assert result['statusCode'] == 200
                 body = json.loads(result['body'])
                 assert body['success'] is True
-                # Should return boto3 version string
-                assert body['output'] is not None
+                # Should return some output
+                assert body['output'] is not None or body['result'] is not None
     
     def test_error_propagation_with_detailed_context_for_production_debugging(self):
         """
@@ -448,9 +417,7 @@ class TestIteration3ProductionReadiness:
         with patch.dict('os.environ', {
             'BEDROCK_MODEL_ID': 'anthropic.claude-opus-4-1-20250805-v1:0',
             'TOOL_LAMBDA_ARN': 'arn:aws:lambda:us-east-1:123:function:tool',
-            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic',
-            'INVESTIGATION_DEPTH': 'comprehensive',
-            'MAX_TOKENS': '20000'
+            'SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123:topic'
         }):
             for scenario in error_scenarios:
                 alarm_event = {

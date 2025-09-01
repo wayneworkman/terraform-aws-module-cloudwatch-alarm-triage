@@ -121,7 +121,7 @@ result = {
         event = {
             'command': '''
 # Use pre-imported modules directly
-dt = datetime.now()
+dt = datetime.datetime.now()
 b64 = base64.b64encode(b"test").decode()
 uid = uuid.uuid4().hex[:8]
 result = f"datetime={dt.year}, base64={b64}, uuid_len={len(uid)}"

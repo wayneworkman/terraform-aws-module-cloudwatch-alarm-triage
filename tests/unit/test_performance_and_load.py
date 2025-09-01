@@ -121,9 +121,10 @@ class TestPerformanceAndLoad:
         
         # Should have processed tool calls (at least some)
         assert mock_lambda.invoke.call_count >= 1
-        # Result should be a string (either success or error message)
-        assert isinstance(result, str)
-        assert len(result) > 0
+        # Result should be a dict with report
+        assert isinstance(result, dict)
+        assert 'report' in result
+        assert len(result['report']) > 0
         
         # Should handle multiple calls efficiently
         assert end_time - start_time < 10.0  # Reasonable time
@@ -148,7 +149,7 @@ class TestPerformanceAndLoad:
         mock_boto3_resource.return_value = mock_dynamodb
         
         # Mock Bedrock client
-        mock_bedrock_client.return_value.investigate_with_tools.return_value = "Analysis complete"
+        mock_bedrock_client.return_value.investigate_with_tools.return_value = {"report": "Analysis complete", "full_context": [], "iteration_count": 1, "tool_calls": []}
         
         # Mock SNS
         mock_sns = Mock()
@@ -285,7 +286,7 @@ result = f"Found {prime_count} primes under 10000, 100! has {len(str(factorial_1
         with patch('time.sleep'):  # Mock sleep to speed up test
             result = client.investigate_with_tools("Test with throttling")
         
-        assert 'Success after retries' in result
+        assert isinstance(result, dict) and 'Success after retries' in result.get("report", "")
         assert mock_bedrock.converse.call_count == 4  # 3 retries + 1 success
     
     @patch('boto3.client')

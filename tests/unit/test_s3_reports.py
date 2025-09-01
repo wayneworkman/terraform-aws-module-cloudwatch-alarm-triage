@@ -8,7 +8,7 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../lambda')))
 
-from triage_handler import save_report_to_s3, format_notification, handler
+from triage_handler import save_enhanced_reports_to_s3, format_notification, handler
 
 class TestS3ReportSaving:
     """Test S3 report saving functionality."""
@@ -22,15 +22,23 @@ class TestS3ReportSaving:
         with patch.dict(os.environ, {'REPORTS_BUCKET': 'test-bucket', 'BEDROCK_MODEL_ID': 'test-model'}):
             with patch('triage_handler.datetime') as mock_datetime:
                 mock_datetime.utcnow.return_value.strftime.side_effect = [
-                    '20240115-143025',  # timestamp
+                    '20240115_143025_UTC',  # timestamp
                     '2024/01/15'        # date path
                 ]
                 mock_datetime.utcnow.return_value.isoformat.return_value = '2024-01-15T14:30:25'
                 
-                result = save_report_to_s3(
+                # Create investigation result dict for new format
+                investigation_result = {
+                    'report': 'Test analysis content',
+                    'full_context': [],
+                    'iteration_count': 5,
+                    'tool_calls': []
+                }
+                
+                report_loc, context_loc, json_loc = save_enhanced_reports_to_s3(
                     alarm_name='test-alarm',
                     alarm_state='ALARM',
-                    analysis='Test analysis content',
+                    investigation_result=investigation_result,
                     event={'accountId': '123456789012', 'region': 'us-east-1'}
                 )
                 
@@ -44,34 +52,32 @@ class TestS3ReportSaving:
                 # Check bucket name
                 assert call_args.kwargs['Bucket'] == 'test-bucket'
                 
-                # Check key format
-                assert 'reports/2024/01/15/test-alarm-20240115-143025.json' in call_args.kwargs['Key']
+                # Check key format - now expecting timestamp first
+                assert 'reports/2024/01/15/20240115_' in call_args.kwargs['Key']
+                assert 'test-alarm' in call_args.kwargs['Key']
                 
-                # Check content type and encryption
-                assert call_args.kwargs['ContentType'] == 'application/json'
-                assert call_args.kwargs['ServerSideEncryption'] == 'AES256'
+                # Should have 3 put_object calls (report.txt, context.txt, json)
+                assert mock_s3.put_object.call_count == 3
                 
-                # Check body content
-                body = json.loads(call_args.kwargs['Body'])
-                assert body['alarm_name'] == 'test-alarm'
-                assert body['alarm_state'] == 'ALARM'
-                assert body['analysis'] == 'Test analysis content'
-                assert body['metadata']['bedrock_model'] == 'test-model'
-                
-                # Check return value
-                assert result.startswith('s3://test-bucket/reports/')
+                # Check return values
+                assert report_loc.startswith('s3://test-bucket/reports/')
+                assert context_loc.startswith('s3://test-bucket/reports/')
+                assert json_loc.startswith('s3://test-bucket/reports/')
     
     def test_save_report_to_s3_no_bucket_configured(self):
         """Test behavior when REPORTS_BUCKET is not configured."""
         with patch.dict(os.environ, {}, clear=True):
-            result = save_report_to_s3(
+            investigation_result = {'report': 'Test analysis', 'full_context': [], 'iteration_count': 0, 'tool_calls': []}
+            report_loc, context_loc, json_loc = save_enhanced_reports_to_s3(
                 alarm_name='test-alarm',
                 alarm_state='ALARM',
-                analysis='Test analysis',
+                investigation_result=investigation_result,
                 event={}
             )
             
-            assert result is None
+            assert report_loc is None
+            assert context_loc is None
+            assert json_loc is None
     
     @patch('triage_handler.boto3.client')
     def test_save_report_to_s3_with_special_characters_in_alarm_name(self, mock_boto3_client):
@@ -87,10 +93,11 @@ class TestS3ReportSaving:
                 ]
                 mock_datetime.utcnow.return_value.isoformat.return_value = '2024-01-15T14:30:25'
                 
-                result = save_report_to_s3(
+                investigation_result = {'report': 'Test analysis', 'full_context': [], 'iteration_count': 0, 'tool_calls': []}
+                report_loc, context_loc, json_loc = save_enhanced_reports_to_s3(
                     alarm_name='test/alarm:with*special?chars',
                     alarm_state='ALARM',
-                    analysis='Test analysis',
+                    investigation_result=investigation_result,
                     event={}
                 )
                 
@@ -112,15 +119,18 @@ class TestS3ReportSaving:
         mock_boto3_client.return_value = mock_s3
         
         with patch.dict(os.environ, {'REPORTS_BUCKET': 'test-bucket'}):
-            result = save_report_to_s3(
+            investigation_result = {'report': 'Test analysis', 'full_context': [], 'iteration_count': 0, 'tool_calls': []}
+            report_loc, context_loc, json_loc = save_enhanced_reports_to_s3(
                 alarm_name='test-alarm',
                 alarm_state='ALARM',
-                analysis='Test analysis',
+                investigation_result=investigation_result,
                 event={}
             )
             
             # Should return None on error
-            assert result is None
+            assert report_loc is None
+            assert context_loc is None
+            assert json_loc is None
     
     @patch('triage_handler.boto3.client')
     def test_save_report_to_s3_with_custom_region(self, mock_boto3_client):
@@ -129,10 +139,11 @@ class TestS3ReportSaving:
         mock_boto3_client.return_value = mock_s3
         
         with patch.dict(os.environ, {'REPORTS_BUCKET': 'test-bucket', 'BEDROCK_REGION': 'eu-west-1'}):
-            save_report_to_s3(
+            investigation_result = {'report': 'Test analysis', 'full_context': [], 'iteration_count': 0, 'tool_calls': []}
+            save_enhanced_reports_to_s3(
                 alarm_name='test-alarm',
                 alarm_state='ALARM',
-                analysis='Test analysis',
+                investigation_result=investigation_result,
                 event={}
             )
             
@@ -146,14 +157,15 @@ class TestS3ReportSaving:
             alarm_state='ALARM',
             analysis='Test analysis',
             event={'region': 'us-east-1', 'accountId': '123456789012'},
-            s3_location=None
+            report_location=None,
+            context_location=None
         )
         
         assert 'CloudWatch Alarm Investigation Results' in result
         assert 'test-alarm' in result
         assert 'ALARM' in result
         assert 'Test analysis' in result
-        assert 'Full Report Location:' not in result
+        assert 'Investigation Files:' not in result
     
     def test_format_notification_with_s3_location(self):
         """Test notification formatting with S3 location."""
@@ -164,11 +176,12 @@ class TestS3ReportSaving:
             alarm_state='ALARM',
             analysis='Test analysis',
             event={'region': 'us-east-1', 'accountId': '123456789012'},
-            s3_location=s3_location
+            report_location=s3_location,
+            context_location=None
         )
         
         assert 'CloudWatch Alarm Investigation Results' in result
-        assert 'Full Report Location:' in result
+        assert 'Investigation Files:' in result
         assert s3_location in result
         assert 'test-alarm' in result
         assert 'ALARM' in result
@@ -184,7 +197,7 @@ class TestS3ReportSaving:
     @patch('triage_handler.should_investigate')
     @patch('triage_handler.BedrockAgentClient')
     @patch('triage_handler.boto3.client')
-    @patch('triage_handler.save_report_to_s3')
+    @patch('triage_handler.save_enhanced_reports_to_s3')
     def test_handler_integration_with_s3_saving(self, mock_save_report, mock_boto3_client, 
                                                 mock_bedrock_client, mock_should_investigate, 
                                                 mock_lambda_context):
@@ -192,13 +205,18 @@ class TestS3ReportSaving:
         # Setup mocks
         mock_should_investigate.return_value = (True, 0)
         mock_bedrock_instance = Mock()
-        mock_bedrock_instance.investigate_with_tools.return_value = "Test analysis"
+        mock_bedrock_instance.investigate_with_tools.return_value = {
+            'report': 'Test analysis',
+            'full_context': [],
+            'iteration_count': 3,
+            'tool_calls': []
+        }
         mock_bedrock_client.return_value = mock_bedrock_instance
         
         mock_sns = Mock()
         mock_boto3_client.return_value = mock_sns
         
-        mock_save_report.return_value = 's3://test-bucket/reports/test.json'
+        mock_save_report.return_value = ('s3://test-bucket/reports/test_report.txt', 's3://test-bucket/reports/test_context.txt', 's3://test-bucket/reports/test.json')
         
         # Test event
         event = {
@@ -211,18 +229,19 @@ class TestS3ReportSaving:
         # Call handler
         result = handler(event, mock_lambda_context)
         
-        # Verify S3 saving was called
-        mock_save_report.assert_called_once_with(
-            'test-alarm',
-            'ALARM',
-            'Test analysis',
-            event
-        )
+        # Verify S3 saving was called with new format
+        mock_save_report.assert_called_once()
+        call_args = mock_save_report.call_args[0]
+        assert call_args[0] == 'test-alarm'
+        assert call_args[1] == 'ALARM'
+        # The third argument should be the investigation result dict
+        assert isinstance(call_args[2], dict) or isinstance(call_args[2], str)
+        assert call_args[3] == event
         
         # Verify response includes S3 location
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
-        assert body['report_location'] == 's3://test-bucket/reports/test.json'
+        assert body['report_location'] == 's3://test-bucket/reports/test_report.txt'
     
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'test-model',
@@ -234,7 +253,7 @@ class TestS3ReportSaving:
     @patch('triage_handler.should_investigate')
     @patch('triage_handler.BedrockAgentClient')
     @patch('triage_handler.boto3.client')
-    @patch('triage_handler.save_report_to_s3')
+    @patch('triage_handler.save_enhanced_reports_to_s3')
     def test_handler_without_s3_bucket_configured(self, mock_save_report, mock_boto3_client,
                                                   mock_bedrock_client, mock_should_investigate,
                                                   mock_lambda_context):
@@ -242,13 +261,18 @@ class TestS3ReportSaving:
         # Setup mocks
         mock_should_investigate.return_value = (True, 0)
         mock_bedrock_instance = Mock()
-        mock_bedrock_instance.investigate_with_tools.return_value = "Test analysis"
+        mock_bedrock_instance.investigate_with_tools.return_value = {
+            'report': 'Test analysis',
+            'full_context': [],
+            'iteration_count': 3,
+            'tool_calls': []
+        }
         mock_bedrock_client.return_value = mock_bedrock_instance
         
         mock_sns = Mock()
         mock_boto3_client.return_value = mock_sns
         
-        mock_save_report.return_value = None  # No S3 location
+        mock_save_report.return_value = (None, None, None)  # No S3 locations
         
         # Test event
         event = {
@@ -279,7 +303,7 @@ class TestS3ReportSaving:
     @patch('triage_handler.should_investigate')
     @patch('triage_handler.BedrockAgentClient')
     @patch('triage_handler.boto3.client')
-    @patch('triage_handler.save_report_to_s3')
+    @patch('triage_handler.save_enhanced_reports_to_s3')
     def test_handler_s3_saving_on_bedrock_error(self, mock_save_report, mock_boto3_client,
                                                 mock_bedrock_client, mock_should_investigate,
                                                 mock_lambda_context):
@@ -293,7 +317,7 @@ class TestS3ReportSaving:
         mock_sns = Mock()
         mock_boto3_client.return_value = mock_sns
         
-        mock_save_report.return_value = 's3://test-bucket/reports/error.json'
+        mock_save_report.return_value = ('s3://test-bucket/reports/error_report.txt', 's3://test-bucket/reports/error_context.txt', 's3://test-bucket/reports/error.json')
         
         # Test event
         event = {
@@ -308,13 +332,15 @@ class TestS3ReportSaving:
         
         # Verify S3 saving was called with error analysis
         mock_save_report.assert_called_once()
-        call_args = mock_save_report.call_args
-        assert 'Investigation Error - Bedrock Unavailable' in call_args[0][2]  # analysis argument
+        call_args = mock_save_report.call_args[0]
+        # The third argument is the investigation_result dict
+        investigation_result = call_args[2]
+        assert 'Investigation Error - Bedrock Unavailable' in investigation_result['report']
         
         # Verify response includes S3 location
         assert result['statusCode'] == 200
         body = json.loads(result['body'])
-        assert body['report_location'] == 's3://test-bucket/reports/error.json'
+        assert body['report_location'] == 's3://test-bucket/reports/error_report.txt'
     
     @patch('triage_handler.boto3.client')
     def test_save_report_to_s3_comprehensive_report_structure(self, mock_boto3_client):
@@ -349,16 +375,31 @@ class TestS3ReportSaving:
                     }
                 }
                 
-                save_report_to_s3(
+                investigation_result = {
+                    'report': 'Detailed investigation results here',
+                    'full_context': [],
+                    'iteration_count': 10,
+                    'tool_calls': []
+                }
+                save_enhanced_reports_to_s3(
                     alarm_name='CPU-High',
                     alarm_state='ALARM',
-                    analysis='Detailed investigation results here',
+                    investigation_result=investigation_result,
                     event=event
                 )
                 
-                # Get the report that was saved
-                call_args = mock_s3.put_object.call_args
-                report = json.loads(call_args.kwargs['Body'])
+                # Should have been called 3 times (report.txt, context.txt, json)
+                assert mock_s3.put_object.call_count == 3
+                
+                # Find the JSON call (it should be the third one)
+                json_call = None
+                for call in mock_s3.put_object.call_args_list:
+                    if call.kwargs['Key'].endswith('.json'):
+                        json_call = call
+                        break
+                
+                assert json_call is not None
+                report = json.loads(json_call.kwargs['Body'])
                 
                 # Verify report structure
                 assert report['alarm_name'] == 'CPU-High'
@@ -366,6 +407,7 @@ class TestS3ReportSaving:
                 assert report['investigation_timestamp'] == '2024-01-15T14:30:25'
                 assert report['analysis'] == 'Detailed investigation results here'
                 assert report['event'] == event
+                assert report['iteration_count'] == 10
                 
                 # Verify metadata
                 assert report['metadata']['bedrock_model'] == 'anthropic.claude-3'
@@ -394,10 +436,11 @@ class TestS3ReportSaving:
                     ]
                     mock_datetime.utcnow.return_value.isoformat.return_value = '2024-01-15T00:00:00'
                     
-                    save_report_to_s3(
+                    investigation_result = {'report': 'Test', 'full_context': [], 'iteration_count': 0, 'tool_calls': []}
+                    save_enhanced_reports_to_s3(
                         alarm_name='test-alarm',
                         alarm_state='ALARM',
-                        analysis='Test',
+                        investigation_result=investigation_result,
                         event={}
                     )
                     

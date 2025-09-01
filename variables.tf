@@ -4,9 +4,9 @@ variable "sns_topic_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model identifier (defaults to Nova Premier for cost effectiveness)"
+  description = "Bedrock model identifier with cross-region inference (defaults to Claude Opus 4.1 for maximum capability)"
   type        = string
-  default     = "us.amazon.nova-premier-v1:0"
+  default     = "us.anthropic.claude-opus-4-1-20250805-v1:0"
 }
 
 variable "resource_prefix" {
@@ -54,7 +54,7 @@ variable "tool_lambda_reserved_concurrency" {
 variable "investigation_window_hours" {
   description = "Hours to wait before allowing re-investigation of the same alarm"
   type        = number
-  default     = 1
+  default     = 24
   
   validation {
     condition     = var.investigation_window_hours > 0 && var.investigation_window_hours <= 24
@@ -85,5 +85,16 @@ variable "reports_bucket_lifecycle_days" {
   validation {
     condition     = var.reports_bucket_lifecycle_days == null || var.reports_bucket_lifecycle_days > 0
     error_message = "Lifecycle days must be null or a positive number"
+  }
+}
+
+variable "log_level" {
+  description = "Logging level for Lambda functions (ERROR, INFO, DEBUG)"
+  type        = string
+  default     = "INFO"
+  
+  validation {
+    condition     = contains(["ERROR", "INFO", "DEBUG"], var.log_level)
+    error_message = "Log level must be one of: ERROR, INFO, DEBUG"
   }
 }

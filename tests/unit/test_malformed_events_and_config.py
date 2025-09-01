@@ -265,8 +265,9 @@ class TestMalformedEventsAndConfiguration:
         # Should return error message for invalid model
         result = client.investigate_with_tools("Test prompt")
         
-        assert "Investigation Error" in result
-        assert "Model not found" in result
+        assert isinstance(result, dict)
+        assert "Investigation Error" in result['report']
+        assert "Model not found" in result['report']
     
     @patch.dict(os.environ, {
         'BEDROCK_MODEL_ID': 'test-model',

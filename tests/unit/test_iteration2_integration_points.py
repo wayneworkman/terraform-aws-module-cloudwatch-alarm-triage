@@ -102,7 +102,7 @@ class TestIteration2IntegrationPoints:
                 assert mock_lambda.call_count == 2
                 
                 # Verify final analysis was returned
-                assert "Based on my investigation" in result
+                assert isinstance(result, dict) and "Based on my investigation" in result.get("report", "")
     
     def test_triage_handler_with_complex_alarm_event_variations(self):
         """
@@ -209,7 +209,7 @@ class TestIteration2IntegrationPoints:
                 result = client.investigate_with_tools("Test prompt")
                 
                 # Should retry and eventually succeed
-                assert "Analysis completed after retries" in result
+                assert isinstance(result, dict) and "Analysis completed after retries" in result.get("report", "")
                 assert mock_bedrock.call_count == 3
                 # Should have slept for backoff
                 assert mock_sleep.call_count >= 2
@@ -389,14 +389,14 @@ class TestIteration2IntegrationPoints:
         with patch.object(client.bedrock, 'converse') as mock_bedrock:
             mock_bedrock.side_effect = responses
             
-            # Mock tool responses
-            tool_response = Mock(
-                StatusCode=200,
-                Payload=Mock(read=lambda: json.dumps({
+            # Mock tool responses - needs to be a dict with subscriptable keys
+            tool_response = {
+                'StatusCode': 200,
+                'Payload': Mock(read=lambda: json.dumps({
                     'statusCode': 200,
                     'body': json.dumps({'success': True, 'output': 'tool result'})
-                }))
-            )
+                }).encode())
+            }
             
             with patch.object(client.lambda_client, 'invoke') as mock_lambda:
                 mock_lambda.return_value = tool_response
@@ -408,6 +408,9 @@ class TestIteration2IntegrationPoints:
                     assert mock_bedrock.call_count == 11
                     assert mock_lambda.call_count == 10
                     
-                    # Should return something (possibly fallback message)
-                    assert isinstance(result, str)
-                    assert len(result) > 0
+                    # Should return dict with report (possibly fallback message)
+                    assert isinstance(result, dict)
+                    assert 'report' in result
+                    assert len(result['report']) > 0
+                    assert result['iteration_count'] == 11
+                    assert len(result['tool_calls']) == 10

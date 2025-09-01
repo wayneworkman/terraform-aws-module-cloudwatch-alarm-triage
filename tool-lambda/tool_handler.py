@@ -3,8 +3,7 @@ import boto3
 import sys
 import os
 import traceback
-import logging
-from datetime import datetime, timedelta
+import datetime
 import re
 import base64
 import ipaddress
@@ -40,9 +39,10 @@ import tarfile
 import zipfile
 import ast
 from io import StringIO, BytesIO
+from logging_config import configure_logging
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# Configure logging based on environment variable
+logger = configure_logging()
 
 def lambda_handler(event, context):
     """Main Lambda handler for executing Python code with pre-imported modules."""
@@ -50,7 +50,7 @@ def lambda_handler(event, context):
         # Execute Python code
         command = event.get('command', '')
         
-        logger.info(f"Executing Python code: {command[:200]}...")
+        logger.debug(f"Executing Python code: {command[:200]}...")
         
         execution_result = execute_python_code(command)
         
@@ -129,7 +129,7 @@ def remove_imports(code):
         return cleaned_code, removed_imports
     except SyntaxError as e:
         # If there's a syntax error, return original code
-        logger.warning(f"Syntax error while removing imports: {e}")
+        logger.debug(f"Syntax error while removing imports: {e}")
         return code, []
 
 def execute_python_code(code):
@@ -157,7 +157,7 @@ def execute_python_code(code):
         for imp in removed_imports:
             import_notice += f"  - {imp}\n"
         import_notice += "All required modules are pre-imported.\n\n"
-        logger.info(f"Removed {len(removed_imports)} import statements from code")
+        logger.debug(f"Removed {len(removed_imports)} import statements from code")
     
     # Import StringIO here for output capture
     from io import StringIO as StringIO_capture
@@ -169,7 +169,6 @@ def execute_python_code(code):
             'boto3': boto3,
             'json': json,
             'datetime': datetime,
-            'timedelta': timedelta,
             
             # Additional standard library modules
             're': re,

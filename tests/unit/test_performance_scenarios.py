@@ -123,7 +123,7 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
         end_time = time.time()
         
         # Should complete efficiently
-        assert 'Rapid investigation completed' in result
+        assert isinstance(result, dict) and 'Rapid investigation completed' in result.get("report", "")
         assert mock_lambda_client.invoke.call_count == 10
         
         # Should not take too long in testing (mocked, so should be very fast)
@@ -146,11 +146,12 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
                 'DYNAMODB_TABLE': 'test-table',
                 'INVESTIGATION_WINDOW_HOURS': '1'
             }):
-                with patch('triage_handler.BedrockAgentClient') as mock_bedrock:
-                    with patch('triage_handler.boto3.client') as mock_boto3:
-                        with patch('triage_handler.boto3.resource') as mock_boto3_resource:
+                with patch('triage_handler.boto3.client') as mock_boto3:
+                    with patch('triage_handler.boto3.resource') as mock_boto3_resource:
+                        with patch('triage_handler.BedrockAgentClient') as mock_bedrock:
                             mock_bedrock.return_value.investigate_with_tools.return_value = f"Analysis for alarm {event_id}"
                             mock_sns = Mock()
+                            mock_s3 = Mock()
                             
                             # Mock DynamoDB
                             mock_dynamodb_table = Mock()
@@ -160,9 +161,13 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
                             mock_dynamodb_resource.Table.return_value = mock_dynamodb_table
                             mock_boto3_resource.return_value = mock_dynamodb_resource
                             
-                            # Mock boto3.client to accept **kwargs
+                            # Mock boto3.client to handle both SNS and S3
                             def client_factory(service_name, **kwargs):
-                                return mock_sns
+                                if service_name == 'sns':
+                                    return mock_sns
+                                elif service_name == 's3':
+                                    return mock_s3
+                                return Mock()
                             mock_boto3.side_effect = client_factory
                             
                             result = triage_handler(test_event, mock_lambda_context)
@@ -238,7 +243,7 @@ result = f"Completed processing {len(result_data)} items"
         
         result = client.investigate_with_tools("Brief investigation prompt")
         
-        assert 'Brief analysis within token limits' in result
+        assert isinstance(result, dict) and 'Brief analysis within token limits' in result.get("report", "")
         
         # Verify that inferenceConfig is passed (no maxTokens anymore)
         call_args = mock_bedrock_client.converse.call_args

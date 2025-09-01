@@ -189,10 +189,11 @@ class TestIteration3ProductionReadiness:
             with patch('time.sleep') as mock_sleep:
                 result = client.investigate_with_tools("Test under high load")
                 
-                # With multiple failures, should eventually return error message
+                # With multiple failures, should eventually return dict with error message
                 # but handle it gracefully without crashing
-                assert isinstance(result, str)
-                assert len(result) > 0
+                assert isinstance(result, dict)
+                assert 'report' in result
+                assert len(result['report']) > 0
                 
                 # Should have attempted at least the first call
                 assert mock_bedrock.call_count >= 1
@@ -331,7 +332,7 @@ class TestIteration3ProductionReadiness:
             end_time = time.time()
             
             # Should complete successfully despite cold start delays
-            assert "Cold start analysis" in result
+            assert isinstance(result, dict) and "Cold start analysis" in result.get("report", "")
             
             # Should handle the delay gracefully (not crash or timeout prematurely)
             execution_time = end_time - start_time

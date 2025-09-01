@@ -80,11 +80,11 @@ result = "processed"
         code = """
 import boto3
 import json
-from datetime import datetime
+import datetime
 
 # This would normally fail if imports weren't pre-imported
 sts = boto3.client('sts')
-now = datetime.now()
+now = datetime.datetime.now()
 data = json.dumps({"time": str(now)})
 result = f"Data: {data[:20]}"
 """
@@ -95,7 +95,7 @@ result = f"Data: {data[:20]}"
         assert 'Removed 3 import statement(s)' in result_dict['stdout']
         assert 'import boto3' in result_dict['stdout']
         assert 'import json' in result_dict['stdout']
-        assert 'from datetime import datetime' in result_dict['stdout']
+        assert 'import datetime' in result_dict['stdout']
     
     def test_handler_with_imports(self, mock_lambda_context):
         """Test Lambda handler with code containing imports."""

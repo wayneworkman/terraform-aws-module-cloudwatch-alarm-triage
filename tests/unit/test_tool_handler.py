@@ -149,7 +149,7 @@ result = "STS client created"
     def test_execute_python_code_various_operations(self):
         """Test execution of various Python operations."""
         operations = [
-            ('result = datetime.now().isoformat()', 'datetime'),
+            ('result = datetime.datetime.now().isoformat()', 'datetime'),
             ('result = json.dumps({"test": True})', 'json'),
             ('result = base64.b64encode(b"test").decode()', 'base64'),
             ('result = hashlib.sha256(b"test").hexdigest()', 'hashlib'),
@@ -187,8 +187,8 @@ raise ValueError("Test error")
         """Test that pre-imported modules work correctly."""
         code = """
 # Test various pre-imported modules
-dt = datetime.now()
-td = timedelta(days=1)
+dt = datetime.datetime.now()
+td = datetime.timedelta(days=1)
 pattern = re.compile(r'\\d+')
 result = f"Modules work: datetime={dt.year}, timedelta={td.days}, re={bool(pattern)}"
 """

@@ -63,8 +63,10 @@ class TestMultiRegionMultiAccount:
         result = client.investigate_with_tools("Test investigation")
         
         # Should return fallback message instead of crashing
-        assert 'Investigation Error' in result or 'Investigation completed but no analysis was generated' in result
-        assert len(result) > 100  # Should include meaningful fallback content
+        assert isinstance(result, dict)
+        report = result['report']
+        assert 'Investigation Error' in report or 'Investigation completed but no analysis was generated' in report
+        assert len(report) > 100  # Should include meaningful fallback content
     
     def test_cross_account_sns_topic_arn_validation(self):
         """Test validation and handling of cross-account SNS topic ARNs."""

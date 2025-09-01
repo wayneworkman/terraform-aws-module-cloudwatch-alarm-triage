@@ -190,7 +190,7 @@ result = f"Accessible: {accessible}, Denied: {denied}"
         mock_sns.publish.return_value = {'MessageId': 'authorized-message-id'}
         mock_boto3_client.return_value = mock_sns
         
-        mock_bedrock.return_value.investigate_with_tools.return_value = "Test analysis"
+        mock_bedrock.return_value.investigate_with_tools.return_value = {"report": "Test analysis", "full_context": [], "iteration_count": 1, "tool_calls": []}
         
         event = {
             'alarmData': {
@@ -437,7 +437,7 @@ result = "Import succeeded - potential security issue"
         
         # Should use the configured ARN
         result = client.investigate_with_tools("Test")
-        assert 'Analysis complete' in result
+        assert isinstance(result, dict) and 'Analysis complete' in result.get("report", "")
     
     def test_tool_handler_code_injection_prevention(self):
         """Test tool handler prevents code injection attacks."""

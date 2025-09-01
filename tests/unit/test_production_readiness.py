@@ -77,7 +77,7 @@ class TestProductionReadiness:
             # This should retry and succeed
             result = client.investigate_with_tools("Test prompt")
             
-            assert result == 'Analysis complete'
+            assert isinstance(result, dict) and result.get("report", "") == 'Analysis complete'
             assert mock_bedrock_client.converse.call_count == 2
             mock_sleep.assert_called_once_with(2)  # First retry delay
     
@@ -103,8 +103,9 @@ class TestProductionReadiness:
             result = client.investigate_with_tools("Test prompt")
             
             # Should return fallback error message
-            assert "Investigation Error" in result
-            assert "ThrottlingException" in result
+            assert isinstance(result, dict)
+            assert "Investigation Error" in result.get("report", "")
+            assert "ThrottlingException" in result.get("report", "")
             # Should try initial + 3 retries = 4 total calls
             assert mock_bedrock_client.converse.call_count == 4
             # Should have 3 sleep calls (for 3 retries)
@@ -132,8 +133,9 @@ class TestProductionReadiness:
             result = client.investigate_with_tools("Test prompt")
             
             # Should return fallback error message  
-            assert "Investigation Error" in result
-            assert "ValidationException" in result
+            assert isinstance(result, dict)
+            assert "Investigation Error" in result.get("report", "")
+            assert "ValidationException" in result.get("report", "")
             # Should only try once
             assert mock_bedrock_client.converse.call_count == 1
             # Should not sleep/retry
@@ -181,7 +183,7 @@ class TestProductionReadiness:
         result = client.investigate_with_tools("Test prompt")
         
         # Should handle timeout gracefully and continue
-        assert 'Tool timed out but continuing' in result
+        assert isinstance(result, dict) and 'Tool timed out but continuing' in result.get("report", "")
     
     def test_tool_lambda_memory_and_performance_limits(self, mock_lambda_context):
         """Test tool Lambda handles large outputs and memory constraints."""
@@ -210,7 +212,7 @@ class TestProductionReadiness:
             with patch('triage_handler.boto3.client') as mock_boto3:
                 # Setup mocks
                 mock_bedrock = Mock()
-                mock_bedrock.investigate_with_tools.return_value = "Analysis completed"
+                mock_bedrock.investigate_with_tools.return_value = {"report": "Analysis completed", "full_context": [], "iteration_count": 1, "tool_calls": []}
                 mock_bedrock_class.return_value = mock_bedrock
                 
                 mock_sns = Mock()

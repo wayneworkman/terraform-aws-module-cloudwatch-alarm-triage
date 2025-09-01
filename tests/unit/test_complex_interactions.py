@@ -103,8 +103,8 @@ class TestComplexInteractions:
         result = client.investigate_with_tools("Complex investigation prompt")
         
         # Should handle partial failures and complete investigation
-        assert 'Investigation complete' in result
-        assert 'multiple tools' in result
+        assert isinstance(result, dict) and 'Investigation complete' in result.get("report", "")
+        assert isinstance(result, dict) and 'multiple tools' in result.get("report", "")
         
         # Verify all tool calls were attempted
         assert mock_lambda_client.invoke.call_count == 3
@@ -180,8 +180,8 @@ class TestComplexInteractions:
         result = client.investigate_with_tools("Iterative investigation")
         
         # Should complete iterative investigation 
-        assert 'Root cause identified through iterative investigation' in result
-        assert 'IAM permission issue' in result
+        assert isinstance(result, dict) and 'Root cause identified through iterative investigation' in result.get("report", "")
+        assert isinstance(result, dict) and 'IAM permission issue' in result.get("report", "")
         
         # Verify iterative pattern
         assert mock_lambda_client.invoke.call_count == 3
@@ -248,7 +248,7 @@ class TestComplexInteractions:
         result = client.investigate_with_tools("Deep investigation")
         
         # Should complete with analysis
-        assert 'Analysis complete: Found 7 instances' in result
+        assert isinstance(result, dict) and 'Analysis complete: Found 7 instances' in result.get("report", "")
         
         # Should have made appropriate number of calls
         assert mock_bedrock_client.converse.call_count == 8  # 7 tools + 1 final

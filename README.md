@@ -11,10 +11,10 @@ Created by [Wayne Workman](https://github.com/wayneworkman)
 A reusable Terraform module that integrates AWS CloudWatch Alarms with AWS Bedrock models in agent mode to automatically investigate and triage alarms. The AI model operates as an agent with access to a Python execution tool that can run boto3 operations and analysis code with pre-imported libraries, providing deep investigation capabilities. This solution provides engineers with comprehensive contextual information and preliminary analysis before they respond to incidents, significantly reducing mean time to resolution (MTTR).
 
 **Supported Models**: 
-- Default: Amazon Nova Premier (`us.amazon.nova-premier-v1:0`) - Cost-effective option
-- Claude Opus 4.1: `anthropic.claude-opus-4-1-20250805-v1:0` - Maximum capability
+- Default: Claude Opus 4.1 (`us.anthropic.claude-opus-4-1-20250805-v1:0`) - Maximum capability and accuracy
+- Alternative: Amazon Nova Premier (`us.amazon.nova-premier-v1:0`) - Cost-effective option
+- The `us.` prefix enables cross-region inference for all Bedrock models
 - Module uses the region of your calling Terraform provider
-- Models must be available in your deployment region
 
 ## Key Features
 
@@ -25,7 +25,9 @@ A reusable Terraform module that integrates AWS CloudWatch Alarms with AWS Bedro
 - **DynamoDB Deduplication**: Prevents duplicate investigations with configurable time window
 - **Pre-imported Python Modules**: Fast execution with 40+ pre-imported Python libraries
 - **Concurrent Execution Control**: Prevents overlapping investigations
-- **Cost Optimization**: Automatic import statement removal enables use of more economical AI models
+- **Security-First Import Control**: Automatic import statement removal ensures only authorized pre-imported modules are used
+- **Enhanced Visibility**: Full context tracking of all AI model interactions with detailed S3 reporting
+- **Configurable Logging**: Environment-based logging levels (ERROR/INFO/DEBUG) for production optimization
 
 ## Architecture
 
@@ -72,14 +74,31 @@ The module uses DynamoDB to prevent duplicate investigations of the same alarm w
 
 ### Investigation Reports Storage
 
-All investigation reports are automatically saved to an S3 bucket with the following features:
+All investigation reports are automatically saved to an S3 bucket with enhanced visibility features:
+
+#### File Organization
+- **Date-based structure**: `reports/YYYY/MM/DD/`
+- **Timestamp-first naming**: `YYYYMMDD_HHMMSS_UTC_{alarm_name}_{type}.{ext}`
+- **Three files per investigation**:
+  - `*_report.txt` - Human-readable investigation report
+  - `*_full_context.txt` - Complete AI model conversation history
+  - `*.json` - Structured data with all metadata
+
+#### Storage Features
 - **Encryption**: Server-side encryption with AES256
 - **Versioning**: Enabled for audit trail
 - **Access Control**: Public access blocked with bucket ACLs
-- **Organization**: Reports organized by date (`reports/YYYY/MM/DD/`)
 - **Optional Logging**: Configure access logging to track report access
 - **Optional Lifecycle**: Auto-delete old reports after specified days
-- **Naming Convention**: `{prefix}-alarm-reports-{random}` for uniqueness
+- **Naming Convention**: `{prefix}-alarm-reports-{random}` for bucket uniqueness
+
+#### Enhanced Visibility Data
+Each investigation captures:
+- **Iteration count**: Total number of Bedrock API invocations
+- **Tool call history**: Complete record of all Python code executions
+- **Full conversation context**: Every interaction between orchestrator and AI model
+- **Timestamps**: Precise UTC timestamps for all operations
+- **Alarm metadata**: Complete CloudWatch alarm event data
 
 ## Module Structure
 
@@ -137,8 +156,11 @@ module "alarm_triage" {
   
   sns_topic_arn = aws_sns_topic.alarm_notifications.arn
   
-  # Optional: Override the default model (Nova Premier)
-  # bedrock_model_id = "anthropic.claude-opus-4-1-20250805-v1:0"  # For maximum capability
+  # Optional: Override the default model (Claude Opus 4.1 with cross-region inference)
+  # bedrock_model_id = "us.amazon.nova-premier-v1:0"  # For cost optimization
+  
+  # Optional: Configure logging level
+  # log_level = "DEBUG"  # Options: ERROR, INFO (default), DEBUG
   
   tags = {
     Environment = "production"
@@ -182,8 +204,9 @@ Check your email and confirm the SNS subscription to receive investigation resul
 
 | Variable | Description | Type | Default |
 |----------|-------------|------|---------|
+| `log_level` | Logging level for Lambda functions (ERROR, INFO, DEBUG) | `string` | `"INFO"` |
 | `sns_topic_arn` | SNS topic ARN for sending investigation results | `string` | Required |
-| `bedrock_model_id` | Bedrock model identifier | `string` | `"us.amazon.nova-premier-v1:0"` |
+| `bedrock_model_id` | Bedrock model identifier | `string` | `"us.anthropic.claude-opus-4-1-20250805-v1:0"` |
 | `lambda_timeout` | Timeout for orchestrator Lambda in seconds | `number` | `900` |
 | `lambda_memory_size` | Memory for orchestrator Lambda in MB | `number` | `1024` |
 | `tool_lambda_timeout` | Timeout for tool Lambda in seconds | `number` | `60` |
@@ -211,25 +234,32 @@ Check your email and confirm the SNS subscription to receive investigation resul
 
 The AI model can investigate alarms by executing Python code with pre-imported modules:
 
-### Intelligent Import Statement Handling
+### Security-First Import Control
 
-The tool Lambda includes intelligent import statement removal to maximize compatibility with various AI models. When more economical models inadvertently include import statements despite instructions, the system automatically:
+The tool Lambda implements automatic import statement removal as a critical security and control feature. This ensures that only authorized, pre-imported modules can be used in the execution environment, preventing:
 
-1. **Detects and removes** all import statements from the provided code
-2. **Logs the removed imports** for transparency
-3. **Continues execution** with the pre-imported modules
+1. **Unauthorized module usage** - No ability to import unapproved libraries
+2. **Supply chain attacks** - Cannot introduce external dependencies
+3. **Resource exhaustion** - Prevents importing resource-intensive modules
+4. **Data exfiltration** - Blocks attempts to import networking libraries not pre-approved
 
-This approach ensures reliable execution across different model tiers, enabling cost optimization without sacrificing functionality. The feature transparently handles common patterns where AI models might generate code like:
+When the AI model includes import statements, the system automatically:
+
+1. **Detects and removes** all import statements using AST parsing
+2. **Logs the removed imports** for security audit trails
+3. **Continues execution** with only the pre-authorized modules
+
+This security control also provides compatibility benefits, allowing the module to work reliably with various AI model tiers. The system transparently handles code like:
 
 ```python
 import boto3
-from datetime import datetime
+import datetime
 import json
 
 # Your investigation code here...
 ```
 
-The system automatically strips these imports and executes the code successfully, as all required modules are already pre-imported in the execution environment.
+The system automatically strips these imports and executes the code with only the pre-authorized modules, maintaining strict security boundaries while ensuring functionality.
 
 ### Pre-Imported Modules Available
 
@@ -240,8 +270,7 @@ The system automatically strips these imports and executes the code successfully
 - **base64** - Base64 encoding/decoding
 
 #### Date & Time
-- **datetime** - The datetime class from datetime module
-- **timedelta** - Direct access to datetime.timedelta class
+- **datetime** - Full datetime module (use datetime.datetime, datetime.timedelta, etc.)
 - **time** - Time-related functions
 
 #### Text & Pattern Matching
@@ -328,7 +357,7 @@ Lambda function `prod-api-handler` experiencing 100% error rate due to missing D
    logs = boto3.client('logs')
    response = logs.filter_log_events(
        logGroupName='/aws/lambda/prod-api-handler',
-       startTime=int((datetime.now() - timedelta(minutes=5)).timestamp() * 1000)
+       startTime=int((datetime.datetime.now() - datetime.timedelta(minutes=5)).timestamp() * 1000)
    )
    ```
    - Found 47 AccessDenied errors in past 5 minutes
@@ -555,21 +584,22 @@ Based on typical usage (100 alarms/month with default 512MB Lambda memory):
 
 ### Cost Reduction Tips
 
-1. **Use cost-effective models** - Nova Premier is the default for cost optimization
+1. **Use cost-effective models** - Nova Premier available as alternative for cost optimization
 2. **Increase deduplication window** - Reduce duplicate investigations
 3. **Use reserved concurrency** - Prevent runaway Lambda costs
 4. **Configure log retention** - Reduce CloudWatch Logs storage
 5. **Optimize Lambda memory** - Adjust based on actual usage
+6. **Set log_level to ERROR in production** - Reduce CloudWatch Logs volume
 
 ## Testing
 
-The module includes comprehensive test coverage with **223 tests** achieving **96% code coverage**:
+The module includes comprehensive test coverage with **252 tests** achieving **96% code coverage**:
 
 ```bash
 # Run all tests
 python -m pytest tests/ -v
 
-# Run unit tests only (216 tests)
+# Run unit tests only (245 tests)
 python -m pytest tests/unit/ -v
 
 # Run integration tests only (7 tests)

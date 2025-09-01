@@ -1,6 +1,6 @@
 # CloudWatch Log Group for failing Lambda (created explicitly for proper ordering)
 resource "aws_cloudwatch_log_group" "demo_lambda_logs" {
-  name              = "/aws/lambda/${aws_lambda_function.demo_failing_lambda.function_name}"
+  name              = "/aws/lambda/${join("-", compact([var.prefix, "ec2-lister"]))}"
   retention_in_days = 7
   
   tags = {

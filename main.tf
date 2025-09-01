@@ -91,6 +91,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "investigation_reports" {
     id     = "delete-old-reports"
     status = "Enabled"
     
+    # Apply to all objects in the bucket
+    filter {}
+    
     # Delete current versions after specified days
     expiration {
       days = var.reports_bucket_lifecycle_days
@@ -299,6 +302,7 @@ resource "aws_lambda_function" "triage_handler" {
       DYNAMODB_TABLE              = aws_dynamodb_table.alarm_investigations.name
       INVESTIGATION_WINDOW_HOURS  = tostring(var.investigation_window_hours)
       REPORTS_BUCKET              = aws_s3_bucket.investigation_reports.id
+      LOG_LEVEL                   = var.log_level
     }
   }
   
@@ -340,6 +344,7 @@ resource "aws_lambda_function" "tool_lambda" {
   environment {
     variables = {
       BEDROCK_REGION       = data.aws_region.current.region
+      LOG_LEVEL            = var.log_level
     }
   }
 }

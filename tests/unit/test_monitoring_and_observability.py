@@ -45,7 +45,7 @@ class TestMonitoringAndObservability:
             mock_bedrock_client.converse.assert_called()
             
             # Verify CloudWatch metrics would be published
-            assert 'Analysis complete' in result
+            assert isinstance(result, dict) and 'Analysis complete' in result.get("report", "")
     
     def test_cost_alarm_threshold_monitoring(self):
         """Test cost alarm creation and threshold monitoring."""
@@ -102,7 +102,7 @@ class TestMonitoringAndObservability:
                         return Mock()
                     
                     mock_boto3.side_effect = client_side_effect
-                    mock_bedrock.return_value.investigate_with_tools.return_value = "Test analysis"
+                    mock_bedrock.return_value.investigate_with_tools.return_value = {"report": "Test analysis", "full_context": [], "iteration_count": 1, "tool_calls": []}
                     
                     # Execute triage handler
                     result = triage_handler(sample_alarm_event, mock_lambda_context)
@@ -274,7 +274,8 @@ class TestMonitoringAndObservability:
         try:
             # Simple health check investigation
             health_result = client.investigate_with_tools("Health check test")
-            health_status = 'healthy' if 'Health check OK' in health_result else 'unhealthy'
+            report = health_result.get('report', '') if isinstance(health_result, dict) else health_result
+            health_status = 'healthy' if 'Health check OK' in report else 'unhealthy'
             
             assert health_status == 'healthy'
             

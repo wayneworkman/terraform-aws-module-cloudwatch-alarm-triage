@@ -60,7 +60,7 @@ class TestBedrockClientEdgeCases:
         result = client.investigate_with_tools("Test prompt")
         
         # Should exhaust iterations and return default message 
-        assert "Investigation completed but no analysis was generated" in result
+        assert isinstance(result, dict) and "Investigation completed but no analysis was generated" in result.get("report", "")
     
     @patch('bedrock_client.boto3.client')
     @patch('bedrock_client.time.sleep')
@@ -110,7 +110,7 @@ class TestBedrockClientEdgeCases:
         result = client.investigate_with_tools("Test prompt")
         
         # Should complete despite tool error
-        assert 'Continuing analysis despite tool timeout' in result
+        assert isinstance(result, dict) and 'Continuing analysis despite tool timeout' in result.get("report", "")
     
     @patch('bedrock_client.boto3.client')
     @patch('bedrock_client.time.sleep')
@@ -131,5 +131,5 @@ class TestBedrockClientEdgeCases:
         result = client.investigate_with_tools("Test prompt")
         
         # Should handle malformed response gracefully with fallback message
-        assert "Investigation Error" in result
-        assert "An error occurred while invoking model" in result
+        assert isinstance(result, dict) and "Investigation Error" in result.get("report", "")
+        assert isinstance(result, dict) and "An error occurred while invoking model" in result.get("report", "")

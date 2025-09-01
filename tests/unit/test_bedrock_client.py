@@ -81,8 +81,11 @@ class TestBedrockAgentClient:
         client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Assertions
-        assert result == 'Investigation complete. Found permission issues.'
+        # Assertions - now expecting a dict result
+        assert isinstance(result, dict)
+        assert result['report'] == 'Investigation complete. Found permission issues.'
+        assert result['iteration_count'] == 2
+        assert len(result['tool_calls']) == 1
         assert mock_bedrock.converse.call_count == 2
         assert mock_lambda.invoke.call_count == 1
     
@@ -157,7 +160,10 @@ class TestBedrockAgentClient:
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
-        assert result == 'Based on the investigation, the issue is with the EC2 instance state.'
+        assert isinstance(result, dict)
+        assert result['report'] == 'Based on the investigation, the issue is with the EC2 instance state.'
+        assert result['iteration_count'] == 3
+        assert len(result['tool_calls']) == 2
         assert mock_bedrock.converse.call_count == 3
         assert mock_lambda.invoke.call_count == 2
     
@@ -211,7 +217,8 @@ class TestBedrockAgentClient:
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
-        assert 'Investigation failed' in result
+        assert isinstance(result, dict)
+        assert 'Investigation failed' in result['report']
         assert mock_bedrock.converse.call_count == 2
         assert mock_lambda.invoke.call_count == 1
     
@@ -231,9 +238,10 @@ class TestBedrockAgentClient:
         client = BedrockAgentClient('test-model', 'test-arn')
         result = client.investigate_with_tools("Test prompt")
         
-        # Assertions
-        assert 'Investigation Error' in result
-        assert 'Bedrock service error' in result
+        # Assertions - result is now a dict
+        assert isinstance(result, dict)
+        assert 'Investigation Error' in result['report']
+        assert 'Bedrock service error' in result['report']
         assert mock_bedrock.converse.call_count == 1
     
     @patch('bedrock_client.boto3.client')
@@ -277,7 +285,9 @@ class TestBedrockAgentClient:
         # Should reach max_iterations (100)
         assert mock_bedrock.converse.call_count == 100
         assert mock_lambda.invoke.call_count == 100
-        assert result == "Investigation completed but no analysis was generated."
+        assert isinstance(result, dict)
+        assert result['report'] == "Investigation completed but no analysis was generated."
+        assert result['iteration_count'] >= 1
     
     @patch('bedrock_client.boto3.client')
     @patch('bedrock_client.time.sleep')
@@ -317,7 +327,10 @@ class TestBedrockAgentClient:
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
-        assert result == 'Investigation complete without tool execution.'
+        assert isinstance(result, dict)
+        assert result['report'] == 'Investigation complete without tool execution.'
+        assert result['iteration_count'] == 2  # One for tool call, one for warning response
+        assert len(result['tool_calls']) == 0
         assert mock_bedrock.converse.call_count == 2
         assert mock_lambda.invoke.call_count == 0  # No tool execution
     
@@ -348,5 +361,7 @@ class TestBedrockAgentClient:
         result = client.investigate_with_tools("Test prompt")
         
         # Assertions
-        assert result == "Investigation completed but no analysis was generated."
+        assert isinstance(result, dict)
+        assert result['report'] == "Investigation completed but no analysis was generated."
+        assert result['iteration_count'] >= 1
         assert mock_bedrock.converse.call_count == 1

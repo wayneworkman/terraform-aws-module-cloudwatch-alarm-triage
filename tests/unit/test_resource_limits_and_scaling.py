@@ -31,8 +31,8 @@ class TestResourceLimitsAndScaling:
         result = client.investigate_with_tools("Test investigation")
         
         # Should return fallback message instead of crashing
-        assert 'Investigation Error' in result or 'Investigation completed but no analysis was generated' in result
-        assert len(result) > 100  # Should include meaningful fallback
+        assert isinstance(result, dict) and ('Investigation Error' in result.get("report", "") or 'Investigation completed but no analysis was generated' in result.get("report", ""))
+        assert isinstance(result, dict) and len(result.get("report", "")) > 10  # Should include meaningful fallback
     
     @patch('bedrock_client.boto3.client')
     @patch('bedrock_client.time.sleep')
@@ -89,8 +89,9 @@ class TestResourceLimitsAndScaling:
         assert len(results) == 7
         # All requests should have gone through Bedrock client and returned fallback
         for result in results:
-            assert isinstance(result, str)
-            assert len(result) > 50  # Should contain meaningful content
+            assert isinstance(result, dict)
+            assert 'report' in result
+            assert len(result['report']) > 50  # Should contain meaningful content
     
     def test_concurrent_alarm_processing_limits(self):
         """Test limits on concurrent alarm processing to prevent resource exhaustion."""
@@ -369,7 +370,7 @@ class TestResourceLimitsAndScaling:
             result = client.investigate_with_tools("Load test investigation")
             
             # Should complete with analysis
-            assert 'Adaptive analysis' in result
+            assert isinstance(result, dict) and 'Adaptive analysis' in result.get("report", "")
     
     def test_burst_capacity_handling(self):
         """Test handling of burst capacity scenarios."""

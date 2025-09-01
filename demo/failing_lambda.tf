@@ -15,7 +15,11 @@ resource "aws_lambda_function" "demo_failing_lambda" {
   }
   
   # Ensure the triage module is fully deployed first
-  depends_on = [time_sleep.wait_for_module]
+  # and log group is created before Lambda to avoid conflicts
+  depends_on = [
+    time_sleep.wait_for_module,
+    aws_cloudwatch_log_group.demo_lambda_logs
+  ]
   
   tags = {
     Environment = "Demo"

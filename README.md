@@ -10,10 +10,11 @@ Created by [Wayne Workman](https://github.com/wayneworkman)
 
 A reusable Terraform module that integrates AWS CloudWatch Alarms with AWS Bedrock models in agent mode to automatically investigate and triage alarms. The AI model operates as an agent with access to a Python execution tool that can run boto3 operations and analysis code with pre-imported libraries, providing deep investigation capabilities. This solution provides engineers with comprehensive contextual information and preliminary analysis before they respond to incidents, significantly reducing mean time to resolution (MTTR).
 
-**Supported Models**: 
-- Default: Claude Opus 4.1 (`us.anthropic.claude-opus-4-1-20250805-v1:0`) - Maximum capability and accuracy
-- Alternative: Amazon Nova Premier (`us.amazon.nova-premier-v1:0`) - Cost-effective option
-- The `us.` prefix enables cross-region inference for all Bedrock models
+**Model Compatibility**:
+- Works with all AWS Bedrock foundational models (Claude, Nova, Titan, etc.)
+- Defaults to Claude Sonnet 4.5 (`global.anthropic.claude-sonnet-4-5-20250929-v1:0`) - currently the best performing model while also being fast and cost-effective
+- Smaller/cheaper models are less capable; newer/larger models are more capable
+- Use the `global.` or `us.` prefix to enable cross-region inference
 - Module uses the region of your calling Terraform provider
 
 ## Key Features
@@ -206,7 +207,7 @@ Check your email and confirm the SNS subscription to receive investigation resul
 |----------|-------------|------|---------|
 | `log_level` | Logging level for Lambda functions (ERROR, INFO, DEBUG) | `string` | `"INFO"` |
 | `sns_topic_arn` | SNS topic ARN for sending investigation results | `string` | Required |
-| `bedrock_model_id` | Bedrock model identifier | `string` | `"us.anthropic.claude-opus-4-1-20250805-v1:0"` |
+| `bedrock_model_id` | Bedrock model identifier | `string` | `"global.anthropic.claude-sonnet-4-5-20250929-v1:0"` |
 | `lambda_timeout` | Timeout for orchestrator Lambda in seconds | `number` | `900` |
 | `lambda_memory_size` | Memory for orchestrator Lambda in MB | `number` | `1024` |
 | `tool_lambda_timeout` | Timeout for tool Lambda in seconds | `number` | `60` |

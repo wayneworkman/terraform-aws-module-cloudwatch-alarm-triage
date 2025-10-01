@@ -365,3 +365,65 @@ class TestBedrockAgentClient:
         assert result['report'] == "Investigation completed but no analysis was generated."
         assert result['iteration_count'] >= 1
         assert mock_bedrock.converse.call_count == 1
+
+    @patch('bedrock_client.boto3.client')
+    @patch('bedrock_client.time.sleep')
+    def test_investigate_with_conversational_text_before_tool(self, mock_sleep, mock_boto3):
+        """Test handling of Claude Sonnet 4.5 behavior where conversational text appears before tool call."""
+        # Setup mocks
+        mock_bedrock = Mock()
+        mock_lambda = Mock()
+        mock_boto3.side_effect = [mock_bedrock, mock_lambda]
+
+        # Mock Converse API response with conversational text BEFORE tool call
+        # This is the actual behavior observed from Claude Sonnet 4.5
+        converse_response_1 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': "I'll investigate this CloudWatch alarm. Let me start by examining the configuration.\n\nTOOL: python_executor\n```python\nimport boto3\ncw = boto3.client('cloudwatch')\nresult = cw.describe_alarms(AlarmNames=['test-alarm'])\nprint(result)\n```"
+                    }]
+                }
+            }
+        }
+
+        # Mock final response
+        converse_response_2 = {
+            'output': {
+                'message': {
+                    'content': [{
+                        'text': '### 🚨 EXECUTIVE SUMMARY\nAlarm triggered due to test condition.\n\n### 🔍 INVESTIGATION DETAILS\nCompleted investigation.'
+                    }]
+                }
+            }
+        }
+
+        mock_bedrock.converse.side_effect = [converse_response_1, converse_response_2]
+
+        # Mock successful Lambda execution
+        mock_lambda.invoke.return_value = {
+            'StatusCode': 200,
+            'Payload': Mock(read=lambda: json.dumps({
+                'statusCode': 200,
+                'body': json.dumps({
+                    'success': True,
+                    'output': 'Alarm configuration retrieved',
+                    'result': '{"AlarmName": "test-alarm"}',
+                    'stdout': '',
+                    'stderr': '',
+                    'execution_time': 0.5
+                })
+            }).encode())
+        }
+
+        # Create client and run investigation
+        client = BedrockAgentClient('test-model', 'test-arn')
+        result = client.investigate_with_tools("Investigate alarm")
+
+        # Assertions
+        assert isinstance(result, dict)
+        assert '🚨 EXECUTIVE SUMMARY' in result['report']
+        assert result['iteration_count'] == 2  # One for tool call, one for final response
+        assert len(result['tool_calls']) == 1  # Should have executed the tool
+        assert mock_bedrock.converse.call_count == 2
+        assert mock_lambda.invoke.call_count == 1  # Tool should have been executed

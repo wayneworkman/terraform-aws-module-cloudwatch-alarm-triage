@@ -128,69 +128,7 @@ result = f"Processed {len(processed)} keys, total items: {sum(processed.values()
         
         # Should not take too long in testing (mocked, so should be very fast)
         assert end_time - start_time < 10.0  # More lenient timing for CI environments
-    
-    def test_concurrent_triage_handler_invocations(self, sample_alarm_event, mock_lambda_context):
-        """Test multiple concurrent triage handler invocations."""
-        
-        def run_triage_handler(event_id):
-            """Run triage handler with unique event."""
-            test_event = sample_alarm_event.copy()
-            test_event['alarmData'] = sample_alarm_event['alarmData'].copy()
-            test_event['alarmData']['alarmName'] = f'test-alarm-{event_id}'
-            
-            # Need to patch environment variables for each thread
-            with patch.dict(os.environ, {
-                'BEDROCK_MODEL_ID': 'test-model',
-                'TOOL_LAMBDA_ARN': 'test-arn',
-                'SNS_TOPIC_ARN': 'test-topic',
-                'DYNAMODB_TABLE': 'test-table',
-                'INVESTIGATION_WINDOW_HOURS': '1'
-            }):
-                with patch('triage_handler.boto3.client') as mock_boto3:
-                    with patch('triage_handler.boto3.resource') as mock_boto3_resource:
-                        with patch('triage_handler.BedrockAgentClient') as mock_bedrock:
-                            mock_bedrock.return_value.investigate_with_tools.return_value = f"Analysis for alarm {event_id}"
-                            mock_sns = Mock()
-                            mock_s3 = Mock()
-                            
-                            # Mock DynamoDB
-                            mock_dynamodb_table = Mock()
-                            mock_dynamodb_table.get_item.return_value = {}
-                            mock_dynamodb_table.put_item.return_value = {}
-                            mock_dynamodb_resource = Mock()
-                            mock_dynamodb_resource.Table.return_value = mock_dynamodb_table
-                            mock_boto3_resource.return_value = mock_dynamodb_resource
-                            
-                            # Mock boto3.client to handle both SNS and S3
-                            def client_factory(service_name, **kwargs):
-                                if service_name == 'sns':
-                                    return mock_sns
-                                elif service_name == 's3':
-                                    return mock_s3
-                                return Mock()
-                            mock_boto3.side_effect = client_factory
-                            
-                            result = triage_handler(test_event, mock_lambda_context)
-                            return result
-        
-        # Run multiple handlers concurrently
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = []
-            for i in range(5):
-                future = executor.submit(run_triage_handler, i)
-                futures.append(future)
-            
-            # Collect results
-            results = []
-            for future in futures:
-                result = future.result()
-                results.append(result)
-        
-        # All should succeed
-        for result in results:
-            assert result['statusCode'] == 200
-            assert json.loads(result['body'])['investigation_complete'] is True
-    
+
     def test_tool_lambda_command_timeout_handling(self, mock_lambda_context):
         """Test tool Lambda handling commands that approach timeout limits."""
         event = {

@@ -108,9 +108,18 @@ resource "aws_s3_bucket_lifecycle_configuration" "investigation_reports" {
 
 resource "random_id" "lambda_hash" {
   keepers = {
-    triage_handler = filemd5("${path.module}/lambda/triage_handler.py")
-    bedrock_client = filemd5("${path.module}/lambda/bedrock_client.py")
+    triage_handler  = filemd5("${path.module}/lambda/triage_handler.py")
+    bedrock_client  = filemd5("${path.module}/lambda/bedrock_client.py")
     prompt_template = filemd5("${path.module}/lambda/prompt_template.py")
+    logging_config  = filemd5("${path.module}/lambda/logging_config.py")
+  }
+  byte_length = 8
+}
+
+resource "random_id" "tool_lambda_hash" {
+  keepers = {
+    tool_handler   = filemd5("${path.module}/tool-lambda/tool_handler.py")
+    logging_config = filemd5("${path.module}/tool-lambda/logging_config.py")
   }
   byte_length = 8
 }
@@ -281,6 +290,7 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/lambda"
   output_path = "/tmp/triage-lambda-${random_id.lambda_hash.hex}.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_lambda_function" "triage_handler" {
@@ -317,7 +327,8 @@ resource "aws_lambda_function" "triage_handler" {
 data "archive_file" "tool_lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/tool-lambda"
-  output_path = "/tmp/tool-lambda-${random_id.lambda_hash.hex}.zip"
+  output_path = "/tmp/tool-lambda-${random_id.tool_lambda_hash.hex}.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_lambda_function" "tool_lambda" {

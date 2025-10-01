@@ -4,9 +4,9 @@ variable "sns_topic_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model identifier with cross-region inference (defaults to Claude Opus 4.1 for maximum capability)"
+  description = "Bedrock model identifier with cross-region inference (defaults to Claude Sonnet 4.5 which outperforms Opus 4.1 while being faster and more cost-effective)"
   type        = string
-  default     = "us.anthropic.claude-opus-4-1-20250805-v1:0"
+  default     = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 }
 
 variable "resource_prefix" {

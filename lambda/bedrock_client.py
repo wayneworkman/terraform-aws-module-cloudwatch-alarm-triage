@@ -201,28 +201,47 @@ Remember: Investigate thoroughly with tools FIRST, then provide your analysis. D
                 })
                 
                 # Check if the response contains a tool call
-                lines = response_text.strip().split('\n')
-                if lines and lines[0].strip().upper().startswith('TOOL: PYTHON_EXECUTOR'):
-                    # Extract code using regex
+                # Claude Sonnet 4.5 sometimes adds conversational text before tool calls
+                # But we need to distinguish between:
+                # 1. Tool calls at the start (with optional conversational text) - should execute
+                # 2. Trailing tool calls after analysis (marked by ###) - should be cleaned up
+
+                # Check if this is a final analysis (starts with ###)
+                is_final_analysis = response_text.strip().startswith('###')
+
+                # Look for tool call marker
+                tool_call_pattern = r'TOOL:\s*python_executor'
+                tool_call_match = re.search(tool_call_pattern, response_text, re.IGNORECASE)
+
+                # If there's a tool call before the final analysis marker, execute it
+                has_tool_call = False
+                if tool_call_match and not is_final_analysis:
+                    # Check if ### appears before the tool call
+                    text_before_tool = response_text[:tool_call_match.start()]
+                    if '###' not in text_before_tool:
+                        has_tool_call = True
+
+                if has_tool_call:
+                    # Extract code using regex (this gets the FIRST code block)
                     code_match = re.search(r'```python\n(.*?)\n```', response_text, re.DOTALL)
                     if code_match:
                         code = code_match.group(1).strip()
                         logger.debug(f"Model requesting Python execution (iteration {iteration + 1})")
-                        
+
                         # Execute the tool
                         tool_result = execute_tool(code)
-                        
+
                         # Add tool result to conversation
                         tool_response = f"""Tool execution result:
 Success: {tool_result.get('success', False)}
 Output:
 {tool_result.get('output', 'No output')}"""
-                        
+
                         messages.append({
                             "role": "user",
                             "content": [{"text": tool_response}]
                         })
-                        
+
                         # Add tool execution to full context
                         full_context.append({
                             "role": "tool_execution",
@@ -230,7 +249,7 @@ Output:
                             "output": tool_result,
                             "timestamp": time.time()
                         })
-                        
+
                         # Small delay between tool calls
                         time.sleep(0.5)
                     else:
